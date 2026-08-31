@@ -1,5 +1,13 @@
 # Foreman Phase 3 — API BFF + React UI Implementation Plan
 
+> **EXECUTED 31-08-2026** — all 11 tasks landed on main (commits 0c23c1e..64cffd0), 117 tests green.
+> Deviations from plan text: vite pinned ^7 (vitest 3 resolves vite 7; ^6 caused a dual-instance
+> type clash); root `vitest.config.ts` gained a `projects` list so `pnpm test` honours apps/web's
+> jsdom environment; API date columns are cast `::text` (pg parses `date` to local-midnight Dates
+> that JSON-serialize to the previous day in UTC); `foreman-github` exposes a `./lib` subpath for
+> the cross-app e2e drain; manual browser smoke (Task 6 step 3) deferred — the api-level e2e
+> covers login→read→write-back→SSE against a real server and database.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the fleet visible — `apps/api` (REST + SSE BFF reading projections under RLS) and `apps/web` (React UI with the Agent View table and a custom virtualised SVG Gantt: bars, dependency arrows, critical path, drag-to-reschedule writing back through the Phase 2 sync path), plus the GitHub App manifest-flow onboarding endpoints deferred from Phase 2.
