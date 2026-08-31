@@ -73,4 +73,63 @@ describe("MCP full agent loop", () => {
         .rejects.toThrow();
     } finally { await srv.close(); await db.teardown(); }
   });
+
+  it("checkpoint_poll is tenant-scoped: another org's agent gets not_found, item stays blocked", async () => {
+    const db = await createTestDatabase();
+    const srv = await startServer(db.servicePool);
+    let clientA: Client | undefined;
+    let clientB: Client | undefined;
+    try {
+      const { orgId: orgA, projectId: projectA } = await seedOrgWithUser(db.servicePool, "cp-tenant-a");
+      const { orgId: orgB, projectId: projectB } = await seedOrgWithUser(db.servicePool, "cp-tenant-b");
+      const { token: tokenA } = await createAgentToken(db.servicePool, { organisationId: orgA, projectId: projectA });
+      const { token: tokenB } = await createAgentToken(db.servicePool, { organisationId: orgB, projectId: projectB });
+
+      const connect = async (token: string) => {
+        const client = new Client({ name: "test-agent", version: "0.0.1" });
+        await client.connect(new StreamableHTTPClientTransport(new URL(srv.url), {
+          requestInit: { headers: { authorization: `Bearer ${token}` } },
+        }));
+        return client;
+      };
+      const call = async (client: Client, name: string, args: Record<string, unknown>) => {
+        const r = await client.callTool({ name, arguments: args });
+        return { isError: r.isError ?? false, body: JSON.parse((r.content as { type: string; text: string }[])[0]!.text) };
+      };
+
+      clientA = await connect(tokenA);
+      clientB = await connect(tokenB);
+
+      await call(clientA, "foreman__agent_announce", { display_name: "agent-a", platform: "test" });
+      await call(clientB, "foreman__agent_announce", { display_name: "agent-b", platform: "test" });
+
+      const item = await enqueueWorkItem(db.servicePool, {
+        organisationId: orgA, projectId: projectA, title: "org-a-only-work" });
+
+      const claim = await call(clientA, "foreman__work_claim", {});
+      expect(claim.isError).toBe(false);
+      expect(claim.body.status).toBe("assigned");
+
+      const checkpoint = await call(clientA, "foreman__work_checkpoint",
+        { work_item_id: item.id, question: "proceed?" });
+      expect(checkpoint.isError).toBe(false);
+      const checkpointId = checkpoint.body.checkpoint_id;
+      expect(checkpointId).toBeTruthy();
+
+      const blockedRow = await db.servicePool.query("select status from work_items where id=$1", [item.id]);
+      expect(blockedRow.rows[0].status).toBe("blocked");
+
+      const foreignPoll = await call(clientB, "foreman__checkpoint_poll", { checkpoint_id: checkpointId });
+      expect(foreignPoll.isError).toBe(true);
+      expect(foreignPoll.body.code).toBe("not_found");
+
+      const stillBlocked = await db.servicePool.query("select status from work_items where id=$1", [item.id]);
+      expect(stillBlocked.rows[0].status).toBe("blocked");
+    } finally {
+      if (clientA) await clientA.close();
+      if (clientB) await clientB.close();
+      await srv.close();
+      await db.teardown();
+    }
+  }, 60_000);
 });

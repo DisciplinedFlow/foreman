@@ -4,6 +4,7 @@ import { z } from "zod";
 import type pg from "pg";
 import {
   appendEvent, claimNextWorkItem, completeWorkItem, extendLease, WipLimitExceededError,
+  type Queryable,
 } from "@foreman/db";
 import type { AuthCtx } from "./auth.js";
 
@@ -17,12 +18,29 @@ function err(code: string, message: string): CallToolResult {
 
 const NOT_ANNOUNCED = err("not_announced", "agent has not announced yet; call foreman__agent_announce first");
 
-async function assertOwnsWorkItem(pool: pg.Pool, workItemId: string, agentId: string):
+async function assertOwnsWorkItem(q: Queryable, workItemId: string, agentId: string):
   Promise<{ organisationId: string; projectId: string } | null> {
-  const res = await pool.query(
+  const res = await q.query(
     "select organisation_id, project_id, claimed_by from work_items where id = $1", [workItemId]);
   if (!res.rowCount || res.rows[0].claimed_by !== agentId) return null;
   return { organisationId: res.rows[0].organisation_id, projectId: res.rows[0].project_id };
+}
+
+// Every mutation + its event must land atomically (X-1): check out one client, begin/commit/rollback
+// around it, so a crash mid-tool-call never leaves state mutated without the event that explains it.
+async function withTx<T>(pool: pg.Pool, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
+  const c = await pool.connect();
+  try {
+    await c.query("begin");
+    const result = await fn(c);
+    await c.query("commit");
+    return result;
+  } catch (e) {
+    await c.query("rollback");
+    throw e;
+  } finally {
+    c.release();
+  }
 }
 
 export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
@@ -38,24 +56,52 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
     },
   }, async ({ display_name, platform, model, capabilities }) => {
     const caps = capabilities ?? [];
-    let agentId: string;
-    if (ctx.agentId) {
-      agentId = ctx.agentId;
-      await pool.query(
-        "update agents set display_name = $1, platform = $2, model = $3, capabilities = $4 where id = $5",
-        [display_name, platform, model ?? null, caps, agentId]);
-    } else {
-      const res = await pool.query(
+
+    const agentId = await withTx(pool, async (c) => {
+      if (ctx.agentId) {
+        const agentId = ctx.agentId;
+        await c.query(
+          "update agents set display_name = $1, platform = $2, model = $3, capabilities = $4 where id = $5",
+          [display_name, platform, model ?? null, caps, agentId]);
+        await appendEvent(c, {
+          organisation_id: ctx.organisationId, project_id: ctx.projectId, agent_id: agentId,
+          type: "agent.announced", payload: { display_name, platform, model, capabilities: caps },
+        });
+        return agentId;
+      }
+
+      // First announce for this token: insert a new agent, then atomically bind the token to it.
+      const ins = await c.query(
         `insert into agents (organisation_id, project_id, display_name, platform, model, capabilities, integration_depth)
          values ($1,$2,$3,$4,$5,$6,'mcp') returning id`,
         [ctx.organisationId, ctx.projectId, display_name, platform, model ?? null, caps]);
-      agentId = res.rows[0].id;
-      await pool.query("update agent_tokens set agent_id = $1 where id = $2", [agentId, ctx.tokenId]);
-    }
-    await appendEvent(pool, {
-      organisation_id: ctx.organisationId, project_id: ctx.projectId, agent_id: agentId,
-      type: "agent.announced", payload: { display_name, platform, model, capabilities: caps },
+      const newAgentId: string = ins.rows[0].id;
+
+      const bind = await c.query(
+        "update agent_tokens set agent_id = $1 where id = $2 and agent_id is null returning agent_id",
+        [newAgentId, ctx.tokenId]);
+
+      let agentId: string;
+      if (bind.rowCount) {
+        agentId = newAgentId;
+      } else {
+        // Lost a concurrent first-announce race on the same token: another request already bound
+        // it. Discard our now-orphaned agent row and fold this announce into the winner instead.
+        await c.query("delete from agents where id = $1", [newAgentId]);
+        const winner = await c.query("select agent_id from agent_tokens where id = $1", [ctx.tokenId]);
+        agentId = winner.rows[0].agent_id;
+        await c.query(
+          "update agents set display_name = $1, platform = $2, model = $3, capabilities = $4 where id = $5",
+          [display_name, platform, model ?? null, caps, agentId]);
+      }
+
+      await appendEvent(c, {
+        organisation_id: ctx.organisationId, project_id: ctx.projectId, agent_id: agentId,
+        type: "agent.announced", payload: { display_name, platform, model, capabilities: caps },
+      });
+      return agentId;
     });
+
     return ok({ agent_id: agentId, project_id: ctx.projectId, poll_interval_ms: 2000, server_time: new Date().toISOString() });
   });
 
@@ -68,11 +114,14 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
     },
   }, async ({ status, current_tool, current_work_item_id }) => {
     if (!ctx.agentId) return NOT_ANNOUNCED;
-    await pool.query("update agents set status = $1, last_seen_at = now() where id = $2", [status, ctx.agentId]);
-    if (current_work_item_id) await extendLease(pool, current_work_item_id, ctx.agentId);
-    await appendEvent(pool, {
-      organisation_id: ctx.organisationId, project_id: ctx.projectId, agent_id: ctx.agentId,
-      type: "agent.heartbeat", payload: { status, current_tool, current_work_item_id },
+    const agentId = ctx.agentId;
+    await withTx(pool, async (c) => {
+      await c.query("update agents set status = $1, last_seen_at = now() where id = $2", [status, agentId]);
+      if (current_work_item_id) await extendLease(c, current_work_item_id, agentId);
+      await appendEvent(c, {
+        organisation_id: ctx.organisationId, project_id: ctx.projectId, agent_id: agentId,
+        type: "agent.heartbeat", payload: { status, current_tool, current_work_item_id },
+      });
     });
     return ok({ ack: true, directives: [] });
   });
@@ -108,15 +157,18 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
     },
   }, async ({ work_item_id, progress_note, percent }) => {
     if (!ctx.agentId) return NOT_ANNOUNCED;
-    const owned = await assertOwnsWorkItem(pool, work_item_id, ctx.agentId);
-    if (!owned) return err("not_yours", "work item is not claimed by you");
-    await pool.query("update work_items set status = 'in_progress', updated_at = now() where id = $1", [work_item_id]);
-    await extendLease(pool, work_item_id, ctx.agentId);
-    await appendEvent(pool, {
-      organisation_id: owned.organisationId, project_id: owned.projectId, agent_id: ctx.agentId,
-      work_item_id, type: "work.progressed", payload: { note: progress_note, percent },
+    const agentId = ctx.agentId;
+    return withTx(pool, async (c) => {
+      const owned = await assertOwnsWorkItem(c, work_item_id, agentId);
+      if (!owned) return err("not_yours", "work item is not claimed by you");
+      await c.query("update work_items set status = 'in_progress', updated_at = now() where id = $1", [work_item_id]);
+      await extendLease(c, work_item_id, agentId);
+      await appendEvent(c, {
+        organisation_id: owned.organisationId, project_id: owned.projectId, agent_id: agentId,
+        work_item_id, type: "work.progressed", payload: { note: progress_note, percent },
+      });
+      return ok({ ack: true });
     });
-    return ok({ ack: true });
   });
 
   server.registerTool("foreman__work_block", {
@@ -128,14 +180,17 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
     },
   }, async ({ work_item_id, reason, blocked_on }) => {
     if (!ctx.agentId) return NOT_ANNOUNCED;
-    const owned = await assertOwnsWorkItem(pool, work_item_id, ctx.agentId);
-    if (!owned) return err("not_yours", "work item is not claimed by you");
-    await pool.query("update work_items set status = 'blocked', updated_at = now() where id = $1", [work_item_id]);
-    await appendEvent(pool, {
-      organisation_id: owned.organisationId, project_id: owned.projectId, agent_id: ctx.agentId,
-      work_item_id, type: "work.blocked", payload: { reason, blocked_on },
+    const agentId = ctx.agentId;
+    return withTx(pool, async (c) => {
+      const owned = await assertOwnsWorkItem(c, work_item_id, agentId);
+      if (!owned) return err("not_yours", "work item is not claimed by you");
+      await c.query("update work_items set status = 'blocked', updated_at = now() where id = $1", [work_item_id]);
+      await appendEvent(c, {
+        organisation_id: owned.organisationId, project_id: owned.projectId, agent_id: agentId,
+        work_item_id, type: "work.blocked", payload: { reason, blocked_on },
+      });
+      return ok({ ack: true });
     });
-    return ok({ ack: true });
   });
 
   server.registerTool("foreman__work_complete", {
@@ -173,42 +228,50 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
     },
   }, async ({ work_item_id, question, options, context }) => {
     if (!ctx.agentId) return NOT_ANNOUNCED;
-    const owned = await assertOwnsWorkItem(pool, work_item_id, ctx.agentId);
-    if (!owned) return err("not_yours", "work item is not claimed by you");
-    const res = await pool.query(
-      `insert into checkpoints (organisation_id, project_id, work_item_id, agent_id, question, options, context)
-       values ($1,$2,$3,$4,$5,$6,$7) returning id`,
-      [owned.organisationId, owned.projectId, work_item_id, ctx.agentId, question,
-        options ? JSON.stringify(options) : null, context ?? null]);
-    const checkpointId = res.rows[0].id;
-    await pool.query("update work_items set status = 'blocked', updated_at = now() where id = $1", [work_item_id]);
-    await appendEvent(pool, {
-      organisation_id: owned.organisationId, project_id: owned.projectId, agent_id: ctx.agentId,
-      work_item_id, type: "work.checkpoint_requested", payload: { checkpoint_id: checkpointId, question, options, context },
+    const agentId = ctx.agentId;
+    return withTx(pool, async (c) => {
+      const owned = await assertOwnsWorkItem(c, work_item_id, agentId);
+      if (!owned) return err("not_yours", "work item is not claimed by you");
+      const res = await c.query(
+        `insert into checkpoints (organisation_id, project_id, work_item_id, agent_id, question, options, context)
+         values ($1,$2,$3,$4,$5,$6,$7) returning id`,
+        [owned.organisationId, owned.projectId, work_item_id, agentId, question,
+          options ? JSON.stringify(options) : null, context ?? null]);
+      const checkpointId = res.rows[0].id;
+      await c.query("update work_items set status = 'blocked', updated_at = now() where id = $1", [work_item_id]);
+      await appendEvent(c, {
+        organisation_id: owned.organisationId, project_id: owned.projectId, agent_id: agentId,
+        work_item_id, type: "work.checkpoint_requested", payload: { checkpoint_id: checkpointId, question, options, context },
+      });
+      return ok({ checkpoint_id: checkpointId, status: "pending", poll_interval_ms: 2000 });
     });
-    return ok({ checkpoint_id: checkpointId, status: "pending", poll_interval_ms: 2000 });
   });
 
   server.registerTool("foreman__checkpoint_poll", {
     description: "Poll a checkpoint for a human answer.",
     inputSchema: { checkpoint_id: z.string().uuid() },
   }, async ({ checkpoint_id }) => {
-    const res = await pool.query(
-      "select work_item_id, organisation_id, project_id, status, answer from checkpoints where id = $1",
-      [checkpoint_id]);
-    if (!res.rowCount) return err("not_found", "checkpoint not found");
-    const row = res.rows[0];
-    if (row.status !== "answered") return ok({ status: "open" });
-    const flipped = await pool.query(
-      "update work_items set status = 'in_progress', updated_at = now() where id = $1 and status = 'blocked' returning id",
-      [row.work_item_id]);
-    if (flipped.rowCount) {
-      await appendEvent(pool, {
-        organisation_id: row.organisation_id, project_id: row.project_id, work_item_id: row.work_item_id,
-        type: "work.unblocked", payload: {},
-      });
-    }
-    return ok({ status: "answered", answer: row.answer });
+    return withTx(pool, async (c) => {
+      // Scoped to this org AND to the agent that raised the checkpoint: a checkpoint id alone must
+      // never reveal whether it exists, let alone its contents, to a caller outside its tenant.
+      const res = await c.query(
+        `select work_item_id, organisation_id, project_id, status, answer
+         from checkpoints where id = $1 and organisation_id = $2 and agent_id = $3`,
+        [checkpoint_id, ctx.organisationId, ctx.agentId]);
+      if (!res.rowCount) return err("not_found", "checkpoint not found");
+      const row = res.rows[0];
+      if (row.status !== "answered") return ok({ status: "open" });
+      const flipped = await c.query(
+        "update work_items set status = 'in_progress', updated_at = now() where id = $1 and status = 'blocked' returning id",
+        [row.work_item_id]);
+      if (flipped.rowCount) {
+        await appendEvent(c, {
+          organisation_id: row.organisation_id, project_id: row.project_id, work_item_id: row.work_item_id,
+          type: "work.unblocked", payload: {},
+        });
+      }
+      return ok({ status: "answered", answer: row.answer });
+    });
   });
 
   server.registerTool("foreman__comm_send", {
@@ -222,6 +285,11 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
     if (!ctx.agentId) return NOT_ANNOUNCED;
     if ((to_agent_id ? 1 : 0) + (broadcast_scope ? 1 : 0) !== 1) {
       return err("invalid_argument", "exactly one of to_agent_id or broadcast_scope is required");
+    }
+    if (to_agent_id) {
+      const target = await pool.query(
+        "select id from agents where id = $1 and organisation_id = $2", [to_agent_id, ctx.organisationId]);
+      if (!target.rowCount) return err("not_found", "target agent not found");
     }
     await appendEvent(pool, {
       organisation_id: ctx.organisationId, project_id: ctx.projectId, agent_id: ctx.agentId,

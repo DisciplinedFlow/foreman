@@ -1,5 +1,5 @@
 import pg from "pg";
-import { appendEvent } from "./events.js";
+import { appendEvent, type Queryable } from "./events.js";
 
 export class WipLimitExceededError extends Error {
   code = "wip_limit_exceeded" as const;
@@ -68,8 +68,8 @@ export async function claimNextWorkItem(pool: pg.Pool,
   finally { c.release(); }
 }
 
-export async function extendLease(pool: pg.Pool, workItemId: string, agentId: string, leaseSeconds = 900): Promise<boolean> {
-  const res = await pool.query(
+export async function extendLease(q: Queryable, workItemId: string, agentId: string, leaseSeconds = 900): Promise<boolean> {
+  const res = await q.query(
     `update work_items set lease_expires_at = now() + make_interval(secs => $3), updated_at = now()
      where id = $1 and claimed_by = $2 and status in ('claimed','in_progress')`,
     [workItemId, agentId, leaseSeconds]);
