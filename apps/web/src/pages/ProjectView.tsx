@@ -95,7 +95,14 @@ export function ProjectView() {
         <button onClick={() => setTab("graph")} disabled={tab === "graph"}>Graph</button>
       </nav>
       {tab === "gantt" && <Gantt items={ganttItems} deps={deps} onReschedule={onReschedule} />}
-      {tab === "agents" && <AgentTable agents={agents} />}
+      {tab === "agents" && (
+        <AgentTable agents={agents} onAction={(agentId, kind, extra) => {
+          api(`/api/agents/${agentId}/directives`, {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ kind, ...extra }),
+          }).finally(() => { void load(["agents"]); });
+        }} />
+      )}
       {tab === "graph" && (graph !== null
         ? <CommGraph nodes={graph.nodes} edges={graph.edges} />
         : <p>No communication data yet.</p>)}

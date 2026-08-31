@@ -38,7 +38,12 @@ function relative(iso: string | null): string | null {
   return `${Math.floor(sec / 3600)}h ago`;
 }
 
-export function AgentTable({ agents }: { agents: AgentRow[] }) {
+import { AgentActions, type DirectiveKind } from "./AgentActions.js";
+
+export function AgentTable({ agents, onAction }: {
+  agents: AgentRow[];
+  onAction?(agentId: string, kind: DirectiveKind, extra: { message?: string; work_item_id?: string }): void;
+}) {
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
 
@@ -89,6 +94,7 @@ export function AgentTable({ agents }: { agents: AgentRow[] }) {
             <th>Tokens</th>
             {header("Cost", "cost")}
             <th>Session</th>
+            {onAction !== undefined && <th>Actions</th>}
           </tr>
         </thead>
         <tbody>
@@ -108,6 +114,9 @@ export function AgentTable({ agents }: { agents: AgentRow[] }) {
               </td>
               <td><Depth value={a.cost_usd === null ? null : `$${Number(a.cost_usd).toFixed(4)}`} /></td>
               <td><Depth value={a.external_session_id} /></td>
+              {onAction !== undefined && (
+                <td><AgentActions agent={a} onAction={(kind, extra) => onAction(a.id, kind, extra)} /></td>
+              )}
             </tr>
           ))}
         </tbody>
