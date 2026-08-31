@@ -1,0 +1,23 @@
+{
+  "name": "foreman",
+  "displayName": "Foreman",
+  "version": "0.1.0",
+  "description": "Reports agent activity to your Foreman control plane and teaches the agent the fleet work loop.",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "userConfig": {
+    "endpoint": {
+      "type": "string",
+      "title": "Foreman endpoint",
+      "description": "Base URL of your Foreman deployment, e.g. https://foreman.example.com",
+      "required": true
+    },
+    "token": {
+      "type": "string",
+      "title": "Agent token",
+      "description": "fmn_agt_ token issued from the Foreman UI for this project",
+      "required": true,
+      "sensitive": true
+    }
+  }
+}

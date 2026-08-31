@@ -265,6 +265,15 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(jsdom@25.0.1)(tsx@4.23.13)
 
+  integrations/claude-code-plugin:
+    devDependencies:
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(jsdom@25.0.1)(tsx@4.23.13)
+
   packages/backbone:
     devDependencies:
       typescript:

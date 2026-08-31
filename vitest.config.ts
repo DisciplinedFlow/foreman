@@ -13,6 +13,7 @@ export default defineConfig({
     projects: [
       "apps/api", "apps/github", "apps/ingest", "apps/mcp", "apps/projector", "apps/scheduler", "apps/web",
       "packages/backbone", "packages/db", "packages/events", "packages/github-client",
+      "integrations/claude-code-plugin",
     ].map((p) => join(root, p)),
   },
 });

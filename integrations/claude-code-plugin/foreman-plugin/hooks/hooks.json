@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "http", "url": "${user_config.endpoint}/ingest/hook", "headers": { "Authorization": "Bearer ${user_config.token}" }, "timeout": 5 }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "http", "url": "${user_config.endpoint}/ingest/hook", "headers": { "Authorization": "Bearer ${user_config.token}" }, "timeout": 3 }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "http", "url": "${user_config.endpoint}/ingest/hook", "headers": { "Authorization": "Bearer ${user_config.token}" }, "timeout": 3 }] }
+    ],
+    "SubagentStart": [
+      { "hooks": [{ "type": "http", "url": "${user_config.endpoint}/ingest/hook", "headers": { "Authorization": "Bearer ${user_config.token}" }, "timeout": 3 }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "http", "url": "${user_config.endpoint}/ingest/hook", "headers": { "Authorization": "Bearer ${user_config.token}" }, "timeout": 3 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "http", "url": "${user_config.endpoint}/ingest/hook", "headers": { "Authorization": "Bearer ${user_config.token}" }, "timeout": 5 }] }
+    ],
+    "Notification": [
+      { "hooks": [{ "type": "http", "url": "${user_config.endpoint}/ingest/hook", "headers": { "Authorization": "Bearer ${user_config.token}" }, "timeout": 3 }] }
+    ]
+  }
+}
