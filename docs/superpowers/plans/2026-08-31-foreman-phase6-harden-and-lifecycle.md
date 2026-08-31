@@ -1,5 +1,14 @@
 # Foreman Phase 6 — Hardening, Finishers, Browser Harness, Lifecycle View Implementation Plan
 
+> **EXECUTED 31-08-2026** — all 11 tasks landed on main (commits 2db4994..b882358), 243 tests green.
+> Browser smoke result: **60fps mean (16.7ms frames) at 2,000 Gantt rows, 32 bars in the DOM** —
+> the GNT-9 target met outright, not just the deviation-5 floor. Deviations from plan text: the
+> web client's csrf header (a plan gap, fixed as its own commit); the harness is Node playwright
+> in one tsx script (webapp-testing skill's Python pattern applied, not its runtime — the seed
+> needs @foreman/db); two harness fixes on first run (SSE breaks networkidle → waitForSelector;
+> tsx's __name helper breaks page.evaluate → source-string form); root test script now carries
+> --testTimeout=20000 --hookTimeout=40000 (structural fix for throwaway-DB contention flakes).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close out v1 (SPEC §9 week 10) and ship the lifecycle view — WL-5 session/CSRF hardening, a real token-bucket rate budget (GHA-7), envelope encryption for GitHub App keys, SMTP brief delivery + overview version diffs, the first-ever browser smoke plus the GNT-9 scroll harness, and LFC-1..5: API-endpoint discovery with an evidence-backed lifecycle state machine.
