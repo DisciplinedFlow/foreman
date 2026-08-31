@@ -7,10 +7,13 @@ import type {
 import type { EchoCache } from "@foreman/github-client";
 import type { FieldMap, GithubClientLike } from "./sync/field-map.js";
 
-// Deviation 4: check runs ship with the Phase 4 plan.
-export class BackboneCapabilityError extends Error {
-  constructor(message: string) { super(message); this.name = "BackboneCapabilityError"; }
-}
+// §5.4 [V]: max 3 actions, label ≤20, description ≤40, identifier ≤20;
+// App statuses only queued|in_progress|completed.
+const CHECK_ACTIONS = [
+  { label: "Retry", description: "Restart from the last checkpoint", identifier: "retry" },
+  { label: "Reassign", description: "Return to the queue", identifier: "reassign" },
+  { label: "Abort", description: "Cancel this run", identifier: "abort" },
+];
 
 // Verified item 6: REST issue-type param is `type` (name string), silently dropped
 // without push access — acceptable.
@@ -29,7 +32,10 @@ interface ProjectRow {
 }
 
 export class GithubBackbone implements Backbone {
-  constructor(private deps: { pool: pg.Pool; gh: GithubClientLike; echo: EchoCache; emitter: EventEmitter }) {}
+  constructor(private deps: {
+    pool: pg.Pool; gh: GithubClientLike; echo: EchoCache; emitter: EventEmitter;
+    workUrlBase?: string;
+  }) {}
 
   private async project(projectId: string): Promise<ProjectRow & { appId: number; installationId: number }> {
     const res = await this.deps.pool.query("select * from projects where id = $1", [projectId]);
@@ -189,8 +195,51 @@ export class GithubBackbone implements Backbone {
     }
   }
 
-  async reportRun(_item: WorkItemRef, _run: RunStatus): Promise<void> {
-    throw new BackboneCapabilityError("check runs ship with the Phase 4 plan");
+  // GHA-5 (Phase 4 deviation 5): one check run per work item, updated in place.
+  // Created only once a head_sha is known; PATCHes need no sha.
+  async reportRun(item: WorkItemRef, run: RunStatus): Promise<void> {
+    const row = await this.item(item.workItemId);
+    if (row.gh_repo === null) return;
+    const existingId = row.gh_check_run_id === null ? null : Number(row.gh_check_run_id);
+    if (existingId === null && (run.headSha === undefined || run.headSha === "")) return;
+    const proj = await this.project(row.project_id);
+
+    const name = `Foreman · #${row.gh_issue_number ?? "?"} ${String(row.title).slice(0, 40)}`;
+    const completed = run.state === "completed";
+    const body = {
+      name,
+      status: run.state,
+      ...(existingId === null ? { head_sha: run.headSha } : {}),
+      details_url: `${this.deps.workUrlBase ?? "http://localhost:5173"}/work/${row.id}`,
+      output: { title: name, summary: run.summary ?? "" },
+      ...(completed ? { conclusion: run.conclusion ?? "neutral" } : { actions: CHECK_ACTIONS }),
+    };
+    const res = existingId === null
+      ? await this.deps.gh.rest(proj.appId, proj.installationId, "POST", `/repos/${row.gh_repo}/check-runs`, body)
+      : await this.deps.gh.rest(proj.appId, proj.installationId, "PATCH", `/repos/${row.gh_repo}/check-runs/${existingId}`, body);
+    if (res.status >= 300) throw new Error(`check run write failed: ${res.status}`);
+    const checkRunId: number = res.json?.id ?? existingId;
+
+    const client = await this.deps.pool.connect();
+    try {
+      await client.query("begin");
+      await client.query("update work_items set gh_check_run_id = $2, updated_at=now() where id = $1",
+        [item.workItemId, checkRunId]);
+      await appendEvent(client, {
+        organisation_id: row.organisation_id, project_id: row.project_id, work_item_id: item.workItemId,
+        type: "github.check_updated",
+        payload: {
+          gh_repo: row.gh_repo, check_run_id: checkRunId, status: run.state,
+          ...(completed ? { conclusion: run.conclusion ?? "neutral" } : {}),
+        },
+      });
+      await client.query("commit");
+    } catch (err) {
+      await client.query("rollback");
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   subscribe(handler: (e: BackboneEvent) => void): Unsubscribe {

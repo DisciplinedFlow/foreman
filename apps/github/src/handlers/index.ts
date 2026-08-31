@@ -7,6 +7,7 @@ import { fullSync } from "../sync/full-sync.js";
 import { handleIssuesEvent, handlePullRequestEvent } from "./issues.js";
 import { handleProjectItemEvent } from "./project-item.js";
 import { handleScheduleWrite } from "./schedule-write.js";
+import { handleReportRun } from "./report-run.js";
 
 const fallbackEcho = new EchoCache(new InMemoryKv());
 
@@ -23,6 +24,10 @@ export async function handleSyncJob(
     case "issues": return handleIssuesEvent(tx, job);
     case "pull_request": return handlePullRequestEvent(tx, job);
     case "projects_v2_item": return handleProjectItemEvent(tx, ctx.echo ?? fallbackEcho, job);
+    case "foreman.report_run": {
+      if (ctx.backbone === undefined) { console.warn("report_run skipped: no backbone wired"); return; }
+      return handleReportRun(job, ctx.backbone);
+    }
     case "foreman.schedule_write": {
       if (ctx.backbone === undefined) { console.warn("schedule_write skipped: no backbone wired"); return; }
       return handleScheduleWrite(job, ctx.backbone);

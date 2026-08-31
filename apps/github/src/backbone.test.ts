@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { createTestDatabase, seedOrgWithUser, type TestDb } from "@foreman/db/testing";
 import { InMemoryKv, EchoCache, type Kv } from "@foreman/github-client";
 import type pg from "pg";
-import { GithubBackbone, BackboneCapabilityError } from "./backbone.js";
+import { GithubBackbone } from "./backbone.js";
 import { seedGithubApp } from "./testing.js";
 
 let db: TestDb;
@@ -116,9 +116,48 @@ describe("GithubBackbone", () => {
     expect(e.rowCount).toBe(1);
   });
 
-  it("reportRun throws BackboneCapabilityError (check runs are Phase 4)", async () => {
-    const { backbone } = makeDeps();
-    await expect(backbone.reportRun({ workItemId: "x" }, { state: "completed" }))
-      .rejects.toBeInstanceOf(BackboneCapabilityError);
+  it("reportRun creates the check run with head_sha, ≤3 constrained actions, then PATCHes in place", async () => {
+    const { backbone, restCalls } = makeDeps();
+    const wi = (await db.servicePool.query(
+      `insert into work_items (organisation_id, project_id, title, gh_issue_number, gh_repo)
+       values ($1,$2,'Implement rate limiter',30,'o/r') returning id`, [orgId, projectId])).rows[0].id;
+
+    await backbone.reportRun({ workItemId: wi }, { state: "in_progress", summary: "3/5 criteria", headSha: "abc123" });
+    expect(restCalls[0]!.method).toBe("POST");
+    expect(restCalls[0]!.path).toBe("/repos/o/r/check-runs");
+    const body = restCalls[0]!.body;
+    expect(body.head_sha).toBe("abc123");
+    expect(body.status).toBe("in_progress");
+    expect(body.actions.length).toBeLessThanOrEqual(3);
+    for (const a of body.actions) {
+      expect(a.label.length).toBeLessThanOrEqual(20);
+      expect(a.description.length).toBeLessThanOrEqual(40);
+      expect(a.identifier.length).toBeLessThanOrEqual(20);
+    }
+    const row = await db.servicePool.query("select gh_check_run_id from work_items where id=$1", [wi]);
+    expect(Number(row.rows[0].gh_check_run_id)).toBe(7777);
+
+    await backbone.reportRun({ workItemId: wi }, { state: "completed", conclusion: "success", summary: "done" });
+    expect(restCalls[1]!.method).toBe("PATCH");
+    expect(restCalls[1]!.path).toBe("/repos/o/r/check-runs/7777");
+    expect(restCalls[1]!.body.conclusion).toBe("success");
+    expect(restCalls[1]!.body.actions).toBeUndefined();
+
+    const e = await db.servicePool.query(
+      "select count(*)::int as n from events where type='github.check_updated' and work_item_id=$1", [wi]);
+    expect(e.rows[0].n).toBe(2);
+  });
+
+  it("reportRun without a repo or sha is a no-op", async () => {
+    const { backbone, restCalls } = makeDeps();
+    const noRepo = (await db.servicePool.query(
+      "insert into work_items (organisation_id, project_id, title) values ($1,$2,'local only') returning id",
+      [orgId, projectId])).rows[0].id;
+    await backbone.reportRun({ workItemId: noRepo }, { state: "completed", headSha: "abc" });
+    const noSha = (await db.servicePool.query(
+      "insert into work_items (organisation_id, project_id, title, gh_repo) values ($1,$2,'no sha yet','o/r') returning id",
+      [orgId, projectId])).rows[0].id;
+    await backbone.reportRun({ workItemId: noSha }, { state: "in_progress" });
+    expect(restCalls.length).toBe(0);
   });
 });

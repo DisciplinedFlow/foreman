@@ -22,6 +22,21 @@ function err(code: string, message: string): CallToolResult {
 
 const NOT_ANNOUNCED = err("not_announced", "agent has not announced yet; call foreman__agent_announce first");
 
+// GHA-5: claim/report/complete reflect into a check run via the github worker —
+// the MCP server never holds GitHub credentials, it only enqueues the job.
+async function enqueueReportRun(q: Queryable, orgId: string, projectId: string, payload: {
+  work_item_id: string; state: "queued" | "in_progress" | "completed";
+  summary?: string; head_sha?: string; conclusion?: "success" | "failure" | "cancelled";
+}): Promise<void> {
+  const proj = await q.query("select gh_installation_id from projects where id = $1", [projectId]);
+  await q.query(
+    `insert into sync_jobs (organisation_id, installation_id, delivery_id, event_name, payload)
+     values ($1,$2,$3,'foreman.report_run',$4)`,
+    [orgId, proj.rows[0]?.gh_installation_id ?? 0,
+     `reportrun:${payload.work_item_id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+     JSON.stringify(payload)]);
+}
+
 async function assertOwnsWorkItem(q: Queryable, workItemId: string, agentId: string):
   Promise<{ organisationId: string; projectId: string; status: string } | null> {
   const res = await q.query(
@@ -158,6 +173,9 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
       return ok({ status: "waiting", task: taskToWire(task) });
     }
     if (!item) return ok({ status: "empty", retry_after_ms: 2000 });
+    await enqueueReportRun(pool, ctx.organisationId, ctx.projectId, {
+      work_item_id: item.id, state: "in_progress", summary: "Claimed by an agent",
+    });
     return ok({
       status: "assigned",
       work_item: {
@@ -173,8 +191,9 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
       work_item_id: z.string().uuid(),
       progress_note: z.string().min(1),
       percent: z.number().min(0).max(100).optional(),
+      commit_sha: z.string().optional(),
     },
-  }, async ({ work_item_id, progress_note, percent }) => {
+  }, async ({ work_item_id, progress_note, percent, commit_sha }) => {
     if (!ctx.agentId) return NOT_ANNOUNCED;
     const agentId = ctx.agentId;
     return withTx(pool, async (c) => {
@@ -192,6 +211,10 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
       await appendEvent(c, {
         organisation_id: owned.organisationId, project_id: owned.projectId, agent_id: agentId,
         work_item_id, type: "work.progressed", payload: { note: progress_note, percent },
+      });
+      await enqueueReportRun(c, owned.organisationId, owned.projectId, {
+        work_item_id, state: "in_progress", summary: progress_note,
+        ...(commit_sha !== undefined ? { head_sha: commit_sha } : {}),
       });
       return ok({ ack: true });
     });
@@ -241,6 +264,11 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
       if (e instanceof Error && /not claimed by you/.test(e.message)) return err("not_yours", e.message);
       throw e;
     }
+    await enqueueReportRun(pool, ctx.organisationId, ctx.projectId, {
+      work_item_id, state: "completed",
+      summary, conclusion: acceptance_results.every((r) => r.met) ? "success" : "failure",
+      ...(commit_sha !== undefined ? { head_sha: commit_sha } : {}),
+    });
     return ok({ ack: true });
   });
 

@@ -103,6 +103,22 @@ describe("MCP tasks surface", () => {
     expect(JSON.parse((result.content as any[])[0].text).answer).toBe("ship it");
   });
 
+  it("work_complete enqueues a foreman.report_run job with completed state (GHA-5)", async () => {
+    const { call } = await connect();
+    await enqueueWorkItem(db.servicePool, { organisationId: orgId, projectId, title: "check-run item", acceptance: [] });
+    const claim = await call("foreman__work_claim", {});
+    expect(claim.status).toBe("assigned");
+    await call("foreman__work_complete", {
+      work_item_id: claim.work_item.id, summary: "built", acceptance_results: [], commit_sha: "sha-1",
+    });
+    const job = await db.servicePool.query(
+      `select payload from sync_jobs where event_name='foreman.report_run'
+       and payload->>'work_item_id' = $1 and payload->>'state' = 'completed'`, [claim.work_item.id]);
+    expect(job.rowCount).toBe(1);
+    expect(job.rows[0].payload.head_sha).toBe("sha-1");
+    expect(job.rows[0].payload.conclusion).toBe("success");
+  });
+
   it("heartbeat from a stalled agent flips it to working and appends agent.resumed", async () => {
     const { call } = await connect();
     const hello = await call("foreman__agent_announce", { display_name: "stall-me", platform: "test", capabilities: [] });
