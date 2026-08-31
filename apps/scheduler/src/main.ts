@@ -1,7 +1,7 @@
 import pg from "pg";
 import { sweepExpiredLeases, enqueueReconcileJobs } from "@foreman/db";
 import { detectStalls } from "./stall.js";
-import { generateBrief } from "foreman-gen/lib";
+import { generateBrief, briefDue, deliverBrief } from "foreman-gen/lib";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const INTERVAL = Number(process.env.SWEEP_INTERVAL_MS ?? 30_000);
@@ -22,16 +22,24 @@ if (RECONCILE_SEC > 0) {
   }, RECONCILE_SEC * 1000);
 }
 
-// BRF-1 (deterministic v1): periodic brief per GitHub-connected project. 0 (default) disables.
-const BRIEF_SEC = Number(process.env.FOREMAN_BRIEF_INTERVAL_SEC ?? 0);
-if (BRIEF_SEC > 0) {
+// BRF-1: tick every minute; a project's brief fires when briefDue says so in
+// its own timezone, then gets delivered (BRF-4). 0 disables the tick.
+const BRIEF_TICK_SEC = Number(process.env.FOREMAN_BRIEF_TICK_SEC ?? 60);
+if (BRIEF_TICK_SEC > 0) {
   setInterval(() => {
     (async () => {
-      const projects = await pool.query("select id from projects where gh_project_node_id is not null");
-      for (const p of projects.rows) await generateBrief(pool, p.id);
-      if (projects.rowCount) console.log(`generated ${projects.rowCount} briefs`);
-    })().catch(err => console.error("brief generation failed", err));
-  }, BRIEF_SEC * 1000);
+      const projects = await pool.query(
+        `select p.id, p.brief_schedule, p.brief_timezone,
+                (select max(window_end) from briefs b where b.project_id = p.id) as last_end
+         from projects p where p.brief_schedule is not null`);
+      for (const p of projects.rows) {
+        if (!briefDue(p.brief_schedule, p.brief_timezone, p.last_end, new Date())) continue;
+        const brief = await generateBrief(pool, p.id);
+        const channels = await deliverBrief(pool, brief);
+        console.log(`brief ${brief.id} generated for ${p.id}; delivered: ${channels.join(",") || "none"}`);
+      }
+    })().catch(err => console.error("brief tick failed", err));
+  }, BRIEF_TICK_SEC * 1000);
 }
 
 // AVW-3: stall sweep. 0 disables.

@@ -6,7 +6,7 @@
   "main": "./src/main.ts",
   "exports": {
     ".": "./src/main.ts",
-    "./lib": "./src/brief.ts"
+    "./lib": "./src/lib.ts"
   },
   "scripts": {
     "start": "tsx src/main.ts",
