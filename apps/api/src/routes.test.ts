@@ -297,6 +297,55 @@ describe("api routes", () => {
     expect(revs.revisions[0].caused_by).toBe("human");
   });
 
+  it("settings PATCH round-trips every field, validates, and appends project.updated", async () => {
+    await db.servicePool.query(
+      "insert into github_apps (app_id, slug, private_key_pem, webhook_secret) values (11,'set','pem','whs') on conflict do nothing");
+    await db.servicePool.query(
+      "insert into github_installations (installation_id, app_id, organisation_id, account_login) values (1111,11,$1,'acme') on conflict do nothing",
+      [a.orgId]);
+
+    const inst = await (await get(`/api/orgs/${a.orgId}/installations`, cookieA)).json();
+    expect(inst.installations.map((i: any) => Number(i.installation_id))).toContain(1111);
+
+    const res = await fetch(`${url}/api/projects/${a.projectId}/settings`, {
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({
+        gh_repos: ["acme/app"], gh_installation_id: 1111, gh_project_node_id: "PVT_set",
+        wip_limit: 25, stall_threshold_sec: 300,
+        brief_schedule: "daily", brief_timezone: "Europe/Amsterdam",
+        brief_webhook_url: "https://hooks.test/x", brief_email: "pm@acme.test",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const { project } = await res.json();
+    expect(project).toMatchObject({
+      gh_repos: ["acme/app"], gh_project_node_id: "PVT_set", wip_limit: 25,
+      stall_threshold_sec: 300, brief_schedule: "daily", brief_timezone: "Europe/Amsterdam",
+      brief_webhook_url: "https://hooks.test/x", brief_email: "pm@acme.test",
+    });
+    const e = await db.servicePool.query(
+      "select payload from events where type='project.updated' and project_id=$1", [a.projectId]);
+    expect(e.rows[0].payload.fields).toContain("brief_timezone");
+
+    const badTz = await fetch(`${url}/api/projects/${a.projectId}/settings`, {
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({ brief_timezone: "Mars/Olympus" }),
+    });
+    expect(badTz.status).toBe(400);
+
+    const foreignInst = await fetch(`${url}/api/projects/${a.projectId}/settings`, {
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({ gh_installation_id: 999999 }),
+    });
+    expect(foreignInst.status).toBe(400);
+
+    const crossOrg = await fetch(`${url}/api/projects/${b.projectId}/settings`, {
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({ wip_limit: 5 }),
+    });
+    expect(crossOrg.status).toBe(404);
+  });
+
   it("lifecycle read computes gaps; scan POST enqueues; cross-org 404s (LFC-4)", async () => {
     const ep = async (method: string, path: string, over: object) => db.servicePool.query(
       `insert into endpoints (organisation_id, project_id, gh_repo, method, path, state, evidence, in_spec, has_impl, has_test)

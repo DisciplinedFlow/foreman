@@ -11,6 +11,23 @@ const directiveBody = z.object({
   work_item_id: z.string().uuid().optional(),
 }).strict();
 
+const validTimezone = (tz: string): boolean => {
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
+};
+
+const settingsBody = z.object({
+  name: z.string().min(1).optional(),
+  gh_repos: z.array(z.string().regex(/^[\w.-]+\/[\w.-]+$/)).optional(),
+  gh_installation_id: z.number().int().nullable().optional(),
+  gh_project_node_id: z.string().min(1).nullable().optional(),
+  wip_limit: z.number().int().min(1).optional(),
+  stall_threshold_sec: z.number().int().min(60).optional(),
+  brief_schedule: z.enum(["daily", "weekly"]).nullable().optional(),
+  brief_timezone: z.string().refine(validTimezone, "unknown IANA timezone").optional(),
+  brief_webhook_url: z.string().url().nullable().optional(),
+  brief_email: z.string().email().nullable().optional(),
+}).strict();
+
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const schedulePatch = z.object({
   start_at: dateStr.optional(),
@@ -37,6 +54,56 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
         `select id, name, gh_repos, gh_project_node_id, wip_limit from projects
          where organisation_id = $1 order by name`, [req.params.orgId])).rows);
     res.json({ projects });
+  }));
+
+  api.get("/orgs/:orgId/installations", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const installations = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        `select installation_id, app_id, account_login, created_at from github_installations
+         where organisation_id = $1 order by created_at desc`, [req.params.orgId])).rows);
+    res.json({ installations });
+  }));
+
+  // Closes the quickstart's "manual-SQL gap": repos/board linking + thresholds +
+  // brief config, validated before anything silently misbehaves.
+  api.patch("/projects/:id/settings", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const parsed = settingsBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid" });
+    const fields = Object.keys(parsed.data);
+    if (fields.length === 0) return res.status(400).json({ error: "no fields" });
+
+    const proj = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query("select organisation_id from projects where id = $1", [req.params.id])).rows[0] ?? null);
+    if (proj === null) return res.status(404).json({ error: "not found" });
+
+    if (parsed.data.gh_installation_id !== undefined && parsed.data.gh_installation_id !== null) {
+      const inst = await deps.servicePool.query(
+        "select 1 from github_installations where installation_id = $1 and organisation_id = $2",
+        [parsed.data.gh_installation_id, proj.organisation_id]);
+      if (inst.rowCount === 0) return res.status(400).json({ error: "installation does not belong to this organisation" });
+    }
+
+    const client = await deps.servicePool.connect();
+    try {
+      await client.query("begin");
+      const sets = fields.map((f, i) => `${f} = $${i + 2}`).join(", ");
+      const updated = await client.query(
+        `update projects set ${sets} where id = $1 returning *`,
+        [req.params.id, ...fields.map((f) => (parsed.data as Record<string, unknown>)[f])]);
+      await appendEvent(client, {
+        organisation_id: proj.organisation_id, project_id: req.params.id,
+        type: "project.updated", payload: { fields },
+      });
+      await client.query("commit");
+      return res.json({ project: updated.rows[0] });
+    } catch (err) {
+      await client.query("rollback").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   }));
 
   api.get("/projects/:id", wrap(async (req, res) => {
