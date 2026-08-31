@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import {
+  GetTaskRequestSchema, GetTaskPayloadRequestSchema, CancelTaskRequestSchema,
+  McpError, ErrorCode, type CallToolResult,
+} from "@modelcontextprotocol/sdk/types.js";
+import { createTask, taskToWire, pollTask, cancelTask } from "./tasks.js";
 import { z } from "zod";
 import type pg from "pg";
 import {
@@ -44,7 +48,8 @@ async function withTx<T>(pool: pg.Pool, fn: (c: pg.PoolClient) => Promise<T>): P
 }
 
 export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
-  const server = new McpServer({ name: "foreman-mcp", version: "0.1.0" });
+  const server = new McpServer({ name: "foreman-mcp", version: "0.1.0" },
+    { capabilities: { tasks: {} } });
 
   server.registerTool("foreman__agent_announce", {
     description: "Announce this agent to Foreman, binding the bearer token to an agent identity.",
@@ -116,8 +121,16 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
     if (!ctx.agentId) return NOT_ANNOUNCED;
     const agentId = ctx.agentId;
     await withTx(pool, async (c) => {
+      const prior = await c.query("select status from agents where id = $1 for update", [agentId]);
       await c.query("update agents set status = $1, last_seen_at = now() where id = $2", [status, agentId]);
       if (current_work_item_id) await extendLease(c, current_work_item_id, agentId);
+      // AVW-3 recovery: any heartbeat from a stalled agent means it's back.
+      if (prior.rows[0]?.status === "stalled") {
+        await appendEvent(c, {
+          organisation_id: ctx.organisationId, project_id: ctx.projectId, agent_id: agentId,
+          type: "agent.resumed", payload: {},
+        });
+      }
       await appendEvent(c, {
         organisation_id: ctx.organisationId, project_id: ctx.projectId, agent_id: agentId,
         type: "agent.heartbeat", payload: { status, current_tool, current_work_item_id },
@@ -127,9 +140,10 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
   });
 
   server.registerTool("foreman__work_claim", {
-    description: "Claim the next available work item in this project (priority order, WIP-limited).",
-    inputSchema: {},
-  }, async () => {
+    description: "Claim the next available work item in this project (priority order, WIP-limited). "
+      + "Pass wait:true to receive a task on an empty queue; poll it with tasks/get until completed.",
+    inputSchema: { wait: z.boolean().optional() },
+  }, async ({ wait }) => {
     if (!ctx.agentId) return NOT_ANNOUNCED;
     let item;
     try {
@@ -137,6 +151,11 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
     } catch (e) {
       if (e instanceof WipLimitExceededError) return err("wip_limit_exceeded", `wip limit exceeded: ${e.scope}`);
       throw e;
+    }
+    if (!item && wait === true) {
+      const task = await createTask(pool, {
+        organisationId: ctx.organisationId, agentId: ctx.agentId, kind: "claim" });
+      return ok({ status: "waiting", task: taskToWire(task) });
     }
     if (!item) return ok({ status: "empty", retry_after_ms: 2000 });
     return ok({
@@ -250,7 +269,13 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
         organisation_id: owned.organisationId, project_id: owned.projectId, agent_id: agentId,
         work_item_id, type: "work.checkpoint_requested", payload: { checkpoint_id: checkpointId, question, options, context },
       });
-      return ok({ checkpoint_id: checkpointId, status: "pending", poll_interval_ms: 2000 });
+      // Task-shaped checkpoint (gate 1): input_required until the human answers;
+      // tasks/get poll-through completes it. checkpoint_poll remains for old clients.
+      const task = await createTask(c, {
+        organisationId: owned.organisationId, agentId, kind: "checkpoint",
+        checkpointId, status: "input_required",
+      });
+      return ok({ checkpoint_id: checkpointId, status: "pending", poll_interval_ms: 2000, task: taskToWire(task) });
     });
   });
 
@@ -319,6 +344,29 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
       if (row.status in buckets) buckets[row.status as keyof typeof buckets] = row.n;
     }
     return ok({ project: { id: proj.rows[0].id, name: proj.rows[0].name }, counts: buckets });
+  });
+
+  // Published tasks surface (gate 1: tasks/get, tasks/result, tasks/cancel; no
+  // tasks/update exists; tasks/list intentionally unimplemented in v1).
+  server.server.setRequestHandler(GetTaskRequestSchema, async (req) => {
+    const row = await pollTask(pool, ctx, req.params.taskId);
+    if (row === null) throw new McpError(ErrorCode.InvalidParams, "task not found");
+    return taskToWire(row);
+  });
+
+  server.server.setRequestHandler(GetTaskPayloadRequestSchema, async (req) => {
+    const row = await pollTask(pool, ctx, req.params.taskId);
+    if (row === null) throw new McpError(ErrorCode.InvalidParams, "task not found");
+    if (row.status !== "completed") {
+      throw new McpError(ErrorCode.InvalidParams, `task is ${row.status}, not completed`);
+    }
+    return ok(row.result as Record<string, unknown>);
+  });
+
+  server.server.setRequestHandler(CancelTaskRequestSchema, async (req) => {
+    const row = await cancelTask(pool, ctx, req.params.taskId);
+    if (row === null) throw new McpError(ErrorCode.InvalidParams, "task not found");
+    return taskToWire(row);
   });
 
   return server;
