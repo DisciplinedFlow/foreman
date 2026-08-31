@@ -6,6 +6,8 @@ import { DecisionCards, type CheckpointRow } from "../checkpoints/DecisionCards.
 import { CommGraph, type CommNode, type CommEdge } from "../graph/CommGraph.js";
 import { OverviewTab, type OverviewSection, type OverviewRevision } from "../overview/OverviewTab.js";
 import { LifecycleTab, type EndpointRow, type LifecycleGaps } from "../lifecycle/LifecycleTab.js";
+import { SettingsTab, type ProjectSettings, type InstallationRow, type TokenRow } from "../settings/SettingsTab.js";
+import { MetricsTab, type Metrics } from "../metrics/MetricsTab.js";
 import { Gantt } from "../gantt/Gantt.js";
 import { mergeSchedule, type GanttItem } from "../gantt/layout.js";
 
@@ -22,7 +24,11 @@ export function ProjectView() {
   const { id } = useParams();
   const projectId = id!;
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"gantt" | "agents" | "graph" | "overview" | "lifecycle">("gantt");
+  const [tab, setTab] = useState<"gantt" | "agents" | "graph" | "overview" | "lifecycle" | "settings" | "metrics">("gantt");
+  const [settings, setSettings] = useState<{ project: ProjectSettings; installations: InstallationRow[]; tokens: TokenRow[] } | null>(null);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [newItemOpen, setNewItemOpen] = useState(false);
+  const [newItem, setNewItem] = useState({ title: "", intent: "", kind: "task", priority: "100" });
   const [lifecycle, setLifecycle] = useState<{ endpoints: EndpointRow[]; gaps: LifecycleGaps } | null>(null);
   const [scanQueued, setScanQueued] = useState(false);
   const [overview, setOverview] = useState<OverviewSection[]>([]);
@@ -93,6 +99,23 @@ export function ProjectView() {
 
   useEffect(() => { if (tab === "overview") loadOverview(); }, [tab, loadOverview]);
 
+  const loadSettings = useCallback(async () => {
+    try {
+      const p = await api<{ project: ProjectSettings }>(`/api/projects/${projectId}`);
+      const orgId = (p.project as unknown as { organisation_id: string }).organisation_id;
+      const inst = await api<{ installations: InstallationRow[] }>(`/api/orgs/${orgId}/installations`);
+      const tok = await api<{ tokens: TokenRow[] }>(`/api/projects/${projectId}/tokens`);
+      setSettings({ project: p.project, installations: inst.installations, tokens: tok.tokens });
+    } catch { /* 401 handled by other loaders */ }
+  }, [projectId]);
+
+  useEffect(() => { if (tab === "settings") void loadSettings(); }, [tab, loadSettings]);
+
+  useEffect(() => {
+    if (tab !== "metrics") return;
+    api<Metrics>(`/api/projects/${projectId}/metrics`).then(setMetrics).catch(() => {});
+  }, [tab, projectId]);
+
   useEffect(() => {
     if (tab !== "lifecycle") return;
     api<{ endpoints: EndpointRow[]; gaps: LifecycleGaps }>(`/api/projects/${projectId}/lifecycle`)
@@ -129,9 +152,48 @@ export function ProjectView() {
         <button onClick={() => setTab("agents")} disabled={tab === "agents"}>Agents</button>{" "}
         <button onClick={() => setTab("graph")} disabled={tab === "graph"}>Graph</button>{" "}
         <button onClick={() => setTab("overview")} disabled={tab === "overview"}>Overview</button>{" "}
-        <button onClick={() => setTab("lifecycle")} disabled={tab === "lifecycle"}>Lifecycle</button>
+        <button onClick={() => setTab("lifecycle")} disabled={tab === "lifecycle"}>Lifecycle</button>{" "}
+        <button onClick={() => setTab("metrics")} disabled={tab === "metrics"}>Metrics</button>{" "}
+        <button onClick={() => setTab("settings")} disabled={tab === "settings"}>Settings</button>
       </nav>
-      {tab === "gantt" && <Gantt items={ganttItems} deps={deps} onReschedule={onReschedule} />}
+      {tab === "gantt" && (
+        <>
+          <p>
+            <button onClick={() => setNewItemOpen((o) => !o)}>{newItemOpen ? "✕ Cancel" : "+ New item"}</button>
+          </p>
+          {newItemOpen && (
+            <form style={{ marginBottom: 12 }} onSubmit={(e) => {
+              e.preventDefault();
+              if (newItem.title.trim() === "") return;
+              api(`/api/projects/${projectId}/items`, {
+                method: "POST", headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  title: newItem.title.trim(),
+                  ...(newItem.intent.trim() !== "" ? { intent: newItem.intent.trim() } : {}),
+                  kind: newItem.kind, priority: Number(newItem.priority),
+                }),
+              }).finally(() => {
+                setNewItem({ title: "", intent: "", kind: "task", priority: "100" });
+                setNewItemOpen(false);
+                void load(["items", "schedule"]);
+              });
+            }}>
+              <label>Title <input value={newItem.title} autoFocus
+                onChange={(e) => setNewItem((n) => ({ ...n, title: e.target.value }))} /></label>{" "}
+              <label>Intent <input value={newItem.intent}
+                onChange={(e) => setNewItem((n) => ({ ...n, intent: e.target.value }))} /></label>{" "}
+              <label>Kind <select value={newItem.kind}
+                onChange={(e) => setNewItem((n) => ({ ...n, kind: e.target.value }))}>
+                {["task", "story", "bug", "epic", "chore"].map((k) => <option key={k} value={k}>{k}</option>)}
+              </select></label>{" "}
+              <label>Priority <input type="number" style={{ width: 70 }} value={newItem.priority}
+                onChange={(e) => setNewItem((n) => ({ ...n, priority: e.target.value }))} /></label>{" "}
+              <button type="submit">Create</button>
+            </form>
+          )}
+          <Gantt items={ganttItems} deps={deps} onReschedule={onReschedule} />
+        </>
+      )}
       {tab === "agents" && (
         <AgentTable agents={agents} onAction={(agentId, kind, extra) => {
           api(`/api/agents/${agentId}/directives`, {
@@ -154,6 +216,22 @@ export function ProjectView() {
               .finally(() => setTimeout(() => setScanQueued(false), 3000));
           }} />
       )}
+      {tab === "metrics" && (metrics !== null ? <MetricsTab metrics={metrics} /> : <p>Loading metrics…</p>)}
+      {tab === "settings" && (settings !== null ? (
+        <SettingsTab project={settings.project} installations={settings.installations} tokens={settings.tokens}
+          exportUrl={`/api/projects/${projectId}/export`}
+          onSave={(body) => {
+            api(`/api/projects/${projectId}/settings`, {
+              method: "PATCH", headers: { "content-type": "application/json" },
+              body: JSON.stringify(body),
+            }).finally(() => { void loadSettings(); });
+          }}
+          onMintToken={() => api<{ token_id: string; token: string }>(`/api/projects/${projectId}/tokens`, { method: "POST" })
+            .then((t) => { void loadSettings(); return t; })}
+          onRevokeToken={(id) => {
+            api(`/api/tokens/${id}`, { method: "DELETE" }).finally(() => { void loadSettings(); });
+          }} />
+      ) : <p>Loading settings…</p>)}
       {tab === "overview" && (
         <OverviewTab sections={overview} onOverride={onOverviewOverride}
           onRegenerate={onOverviewRegenerate} busy={regenBusy}
