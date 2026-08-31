@@ -297,6 +297,61 @@ describe("api routes", () => {
     expect(revs.revisions[0].caused_by).toBe("human");
   });
 
+  it("item POST: local project → 201 + work.created; connected project → 202 + create_item job", async () => {
+    const local = (await db.servicePool.query(
+      "insert into projects (organisation_id, name) values ($1,'local-p') returning id", [a.orgId])).rows[0].id;
+    const r1 = await fetch(`${url}/api/projects/${local}/items`, {
+      method: "POST", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({ title: "local item", intent: "do it", kind: "task", acceptance: ["works"] }),
+    });
+    expect(r1.status).toBe(201);
+    const { work_item_id } = await r1.json();
+    expect((await db.servicePool.query(
+      "select 1 from events where type='work.created' and work_item_id=$1", [work_item_id])).rowCount).toBe(1);
+
+    const connected = (await db.servicePool.query(
+      `insert into projects (organisation_id, name, gh_repos, gh_installation_id)
+       values ($1,'conn-p', array['acme/app'], 1111) returning id`, [a.orgId])).rows[0].id;
+    const r2 = await fetch(`${url}/api/projects/${connected}/items`, {
+      method: "POST", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({ title: "gh item", kind: "bug" }),
+    });
+    expect(r2.status).toBe(202);
+    const job = await db.servicePool.query(
+      "select payload from sync_jobs where event_name='foreman.create_item'");
+    expect(job.rowCount).toBe(1);
+    expect(job.rows[0].payload).toMatchObject({ project_id: connected, title: "gh item", kind: "bug" });
+
+    const noTitle = await fetch(`${url}/api/projects/${local}/items`, {
+      method: "POST", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({ intent: "x" }),
+    });
+    expect(noTitle.status).toBe(400);
+  });
+
+  it("tokens: mint once, list hides the secret, revoke kills it, cross-org 404s", async () => {
+    const mint = await fetch(`${url}/api/projects/${a.projectId}/tokens`, {
+      method: "POST", headers: mut() });
+    expect(mint.status).toBe(201);
+    const { token_id, token } = await mint.json();
+    expect(token.startsWith("fmn_agt_")).toBe(true);
+
+    const { authenticateAgentToken } = await import("@foreman/db");
+    expect(await authenticateAgentToken(db.servicePool as any, `Bearer ${token}`)).not.toBeNull();
+
+    const list = await (await get(`/api/projects/${a.projectId}/tokens`, cookieA)).json();
+    const row = list.tokens.find((t: any) => t.id === token_id);
+    expect(row).toBeDefined();
+    expect(JSON.stringify(row)).not.toContain(token);
+
+    const del = await fetch(`${url}/api/tokens/${token_id}`, { method: "DELETE", headers: mut() });
+    expect(del.status).toBe(200);
+    expect(await authenticateAgentToken(db.servicePool as any, `Bearer ${token}`)).toBeNull();
+
+    const bMint = await fetch(`${url}/api/projects/${b.projectId}/tokens`, { method: "POST", headers: mut() });
+    expect(bMint.status).toBe(404);
+  });
+
   it("settings PATCH round-trips every field, validates, and appends project.updated", async () => {
     await db.servicePool.query(
       "insert into github_apps (app_id, slug, private_key_pem, webhook_secret) values (11,'set','pem','whs') on conflict do nothing");

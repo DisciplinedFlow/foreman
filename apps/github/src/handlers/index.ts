@@ -11,6 +11,7 @@ import { handleDeploymentStatus } from "./deployment.js";
 import { scanLifecycle } from "../lifecycle/scan.js";
 import { handleScheduleWrite } from "./schedule-write.js";
 import { handleReportRun } from "./report-run.js";
+import { handleCreateItem } from "./create-item.js";
 
 const fallbackEcho = new EchoCache(new InMemoryKv());
 
@@ -37,6 +38,10 @@ export async function handleSyncJob(
       if (proj.rowCount === 0 || (proj.rows[0].gh_repos ?? []).length === 0) return;
       await scanLifecycle(tx, ctx.gh, proj.rows[0]);
       return;
+    }
+    case "foreman.create_item": {
+      if (ctx.backbone === undefined) { console.warn("create_item skipped: no backbone wired"); return; }
+      return handleCreateItem(job, ctx.backbone);
     }
     case "foreman.report_run": {
       if (ctx.backbone === undefined) { console.warn("report_run skipped: no backbone wired"); return; }

@@ -1,6 +1,6 @@
 import type express from "express";
 import { z } from "zod";
-import { appendEvent } from "@foreman/db";
+import { appendEvent, enqueueWorkItem, createAgentToken, revokeAgentToken } from "@foreman/db";
 import { SECTIONS, regenerateOverview, llmFromEnv } from "foreman-gen/lib";
 import { withUser } from "./rls.js";
 import type { ApiDeps, AuthedRequest } from "./http.js";
@@ -26,6 +26,14 @@ const settingsBody = z.object({
   brief_timezone: z.string().refine(validTimezone, "unknown IANA timezone").optional(),
   brief_webhook_url: z.string().url().nullable().optional(),
   brief_email: z.string().email().nullable().optional(),
+}).strict();
+
+const newItemBody = z.object({
+  title: z.string().min(1),
+  intent: z.string().optional(),
+  kind: z.enum(["epic", "story", "task", "bug", "chore"]).optional(),
+  priority: z.number().int().min(0).optional(),
+  acceptance: z.array(z.string()).optional(),
 }).strict();
 
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -54,6 +62,68 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
         `select id, name, gh_repos, gh_project_node_id, wip_limit from projects
          where organisation_id = $1 order by name`, [req.params.orgId])).rows);
     res.json({ projects });
+  }));
+
+  // §2.2 from the UI: local projects enqueue directly; GitHub-connected ones go
+  // through the github worker (single GitHub writer), 202 + SSE confirms.
+  api.post("/projects/:id/items", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const parsed = newItemBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid" });
+    const proj = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        "select organisation_id, gh_repos, gh_installation_id from projects where id = $1", [req.params.id])).rows[0] ?? null);
+    if (proj === null) return res.status(404).json({ error: "not found" });
+
+    const connected = (proj.gh_repos ?? []).length > 0 && proj.gh_installation_id !== null;
+    if (connected) {
+      await deps.servicePool.query(
+        `insert into sync_jobs (organisation_id, installation_id, delivery_id, event_name, payload)
+         values ($1,$2,$3,'foreman.create_item',$4)`,
+        [proj.organisation_id, proj.gh_installation_id,
+         `createitem:${req.params.id}:${Date.now()}`,
+         JSON.stringify({ project_id: req.params.id, ...parsed.data })]);
+      return res.status(202).json({ queued: true });
+    }
+    const item = await enqueueWorkItem(deps.servicePool, {
+      organisationId: proj.organisation_id, projectId: req.params.id ?? "",
+      title: parsed.data.title,
+      ...(parsed.data.intent !== undefined ? { intent: parsed.data.intent } : {}),
+      ...(parsed.data.kind !== undefined ? { kind: parsed.data.kind } : {}),
+      ...(parsed.data.priority !== undefined ? { priority: parsed.data.priority } : {}),
+      acceptance: parsed.data.acceptance ?? [],
+    });
+    return res.status(201).json({ work_item_id: item.id });
+  }));
+
+  api.get("/projects/:id/tokens", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const tokens = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        `select t.id, t.created_at, t.last_used_at, t.revoked_at, a.display_name as agent_name
+         from agent_tokens t left join agents a on a.id = t.agent_id
+         where t.project_id = $1 order by t.created_at desc`, [req.params.id])).rows);
+    res.json({ tokens });
+  }));
+
+  // The raw token appears exactly once, in this response.
+  api.post("/projects/:id/tokens", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const proj = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query("select organisation_id from projects where id = $1", [req.params.id])).rows[0] ?? null);
+    if (proj === null) return res.status(404).json({ error: "not found" });
+    const minted = await createAgentToken(deps.servicePool, {
+      organisationId: proj.organisation_id, projectId: req.params.id ?? "" });
+    return res.status(201).json({ token_id: minted.id, token: minted.token });
+  }));
+
+  api.delete("/tokens/:id", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const visible = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query("select 1 from agent_tokens where id = $1", [req.params.id])).rowCount !== 0);
+    if (!visible) return res.status(404).json({ error: "not found" });
+    await revokeAgentToken(deps.servicePool, req.params.id ?? "");
+    return res.json({ ok: true });
   }));
 
   api.get("/orgs/:orgId/installations", wrap(async (req, res) => {
