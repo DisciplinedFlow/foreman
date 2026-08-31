@@ -1,5 +1,6 @@
 import type express from "express";
 import { z } from "zod";
+import { appendEvent } from "@foreman/db";
 import { withUser } from "./rls.js";
 import type { ApiDeps, AuthedRequest } from "./http.js";
 
@@ -96,6 +97,84 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
        `schedwrite:${item.id}:${Date.now()}`,
        JSON.stringify({ work_item_id: item.id, ...parsed.data })]);
     res.status(202).json({ queued: true });
+  }));
+
+  api.get("/projects/:id/checkpoints", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const checkpoints = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        `select c.id, c.work_item_id, w.title as work_item_title, c.question, c.options, c.context, c.created_at
+         from checkpoints c join work_items w on w.id = c.work_item_id
+         where c.project_id = $1 and c.status = 'open' order by c.created_at`, [req.params.id])).rows);
+    res.json({ checkpoints });
+  }));
+
+  // BRF-5: answering here resolves the agent's checkpoint task on its next poll.
+  api.post("/checkpoints/:id/answer", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const answer = typeof req.body?.answer === "string" ? req.body.answer.trim() : "";
+    if (answer === "") return res.status(400).json({ error: "answer required" });
+
+    const visible = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        "select organisation_id, project_id from checkpoints where id = $1", [req.params.id])).rows[0] ?? null);
+    if (visible === null) return res.status(404).json({ error: "not found" });
+
+    const client = await deps.servicePool.connect();
+    try {
+      await client.query("begin");
+      const upd = await client.query(
+        `update checkpoints set status='answered', answer=$2, answered_by=$3, answered_at=now()
+         where id = $1 and status = 'open'`, [req.params.id, answer, userId]);
+      if (upd.rowCount === 0) { await client.query("rollback"); return res.status(409).json({ error: "already answered" }); }
+      await appendEvent(client, {
+        organisation_id: visible.organisation_id, project_id: visible.project_id,
+        type: "human.decided",
+        payload: { actor_user_id: userId, checkpoint_id: req.params.id, answer },
+      });
+      await client.query("commit");
+    } catch (err) {
+      await client.query("rollback").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+    return res.json({ ok: true });
+  }));
+
+  api.get("/projects/:id/briefs", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const limit = Math.min(50, Number(req.query.limit ?? 10) || 10);
+    const briefs = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        `select id, window_start, window_end, content, generated_at
+         from briefs where project_id = $1 order by window_end desc limit $2`, [req.params.id, limit])).rows);
+    res.json({ briefs });
+  }));
+
+  api.get("/projects/:id/comm-graph", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const graph = await withUser(deps.appPool, userId, async (tx) => {
+      const nodes = await tx.query(
+        `select id, display_name, platform, status, parent_agent_id
+         from agents where project_id = $1 order by display_name`, [req.params.id]);
+      const edges = await tx.query(
+        `select coalesce(payload->>'parent_agent_id', payload->>'from_agent_id') as from_id,
+                coalesce(payload->>'child_agent_id', payload->>'to_agent_id') as to_id,
+                case when type = 'comm.message_sent' then 'message' else 'spawn' end as kind,
+                count(*)::int as count
+         from events
+         where project_id = $1 and type in ('comm.subagent_spawned', 'comm.message_sent')
+         group by 1, 2, 3 having coalesce(payload->>'child_agent_id', payload->>'to_agent_id') is not null
+         order by 1, 2, 3`, [req.params.id]);
+      return {
+        nodes: nodes.rows,
+        edges: edges.rows.map((e: any) => ({
+          from: e.from_id ?? null, to: e.to_id, kind: e.kind, count: e.count,
+        })),
+      };
+    });
+    res.json(graph);
   }));
 
   api.get("/projects/:id/agents", wrap(async (req, res) => {

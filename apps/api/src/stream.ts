@@ -26,6 +26,8 @@ export async function createEventHub(servicePool: pg.Pool): Promise<EventHub> {
 // Deviation 3: invalidation deltas, not row deltas — the client refetches the scope.
 function scopesFor(type: string): string[] {
   if (type.startsWith("agent.")) return ["agents"];
+  if (type.startsWith("comm.")) return ["agents"];
+  if (type.startsWith("human.") || type.includes("checkpoint")) return ["checkpoints", "agents"];
   if (type === "work.rescheduled" || type === "github.project_item_changed") return ["items", "schedule"];
   return ["items", "schedule", "agents"];
 }

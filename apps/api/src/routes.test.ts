@@ -143,6 +143,83 @@ describe("api routes", () => {
     expect(res.status).toBe(400);
   });
 
+  it("checkpoints: open ones listed; answering flips + appends human.decided; twice → 409; other org → 404", async () => {
+    const ag = (await db.servicePool.query(
+      "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'cp-agent','test') returning id",
+      [a.orgId, a.projectId])).rows[0].id;
+    const wi = (await db.servicePool.query(
+      "insert into work_items (organisation_id, project_id, title) values ($1,$2,'cp target') returning id",
+      [a.orgId, a.projectId])).rows[0].id;
+    const cp = (await db.servicePool.query(
+      `insert into checkpoints (organisation_id, project_id, work_item_id, agent_id, question, options)
+       values ($1,$2,$3,$4,'pick one','["x","y"]') returning id`, [a.orgId, a.projectId, wi, ag])).rows[0].id;
+
+    const list = await (await get(`/api/projects/${a.projectId}/checkpoints`, cookieA)).json();
+    expect(list.checkpoints.map((c: any) => c.id)).toContain(cp);
+    expect(list.checkpoints.find((c: any) => c.id === cp).work_item_title).toBe("cp target");
+
+    const answer = await fetch(`${url}/api/checkpoints/${cp}/answer`, {
+      method: "POST", headers: { "content-type": "application/json", cookie: cookieA },
+      body: JSON.stringify({ answer: "x" }),
+    });
+    expect(answer.status).toBe(200);
+    const row = await db.servicePool.query("select status, answer, answered_by from checkpoints where id=$1", [cp]);
+    expect(row.rows[0]).toMatchObject({ status: "answered", answer: "x", answered_by: a.userId });
+    expect((await db.servicePool.query(
+      "select 1 from events where type='human.decided' and payload->>'checkpoint_id'=$1", [cp])).rowCount).toBe(1);
+
+    const again = await fetch(`${url}/api/checkpoints/${cp}/answer`, {
+      method: "POST", headers: { "content-type": "application/json", cookie: cookieA },
+      body: JSON.stringify({ answer: "y" }),
+    });
+    expect(again.status).toBe(409);
+
+    const bAgent = (await db.servicePool.query(
+      "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'b-agent','test') returning id",
+      [b.orgId, b.projectId])).rows[0].id;
+    const bWi = (await db.servicePool.query(
+      "insert into work_items (organisation_id, project_id, title) values ($1,$2,'b wi') returning id",
+      [b.orgId, b.projectId])).rows[0].id;
+    const bCp = (await db.servicePool.query(
+      `insert into checkpoints (organisation_id, project_id, work_item_id, agent_id, question)
+       values ($1,$2,$3,$4,'b question') returning id`, [b.orgId, b.projectId, bWi, bAgent])).rows[0].id;
+    const forbidden = await fetch(`${url}/api/checkpoints/${bCp}/answer`, {
+      method: "POST", headers: { "content-type": "application/json", cookie: cookieA },
+      body: JSON.stringify({ answer: "nope" }),
+    });
+    expect(forbidden.status).toBe(404);
+  });
+
+  it("briefs are listed newest-first", async () => {
+    await db.servicePool.query(
+      `insert into briefs (organisation_id, project_id, window_start, window_end, content)
+       values ($1,$2,'2026-08-30','2026-08-31','{"window":{}}')`, [a.orgId, a.projectId]);
+    const res = await get(`/api/projects/${a.projectId}/briefs`, cookieA);
+    const { briefs } = await res.json();
+    expect(briefs.length).toBe(1);
+    expect(briefs[0].content).toEqual({ window: {} });
+  });
+
+  it("comm-graph aggregates spawn events into weighted edges", async () => {
+    const parent = (await db.servicePool.query(
+      "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'parent','test') returning id",
+      [a.orgId, a.projectId])).rows[0].id;
+    const child = (await db.servicePool.query(
+      "insert into agents (organisation_id, project_id, display_name, platform, parent_agent_id) values ($1,$2,'child','test',$3) returning id",
+      [a.orgId, a.projectId, parent])).rows[0].id;
+    for (let i = 0; i < 2; i++) {
+      await db.servicePool.query(
+        `insert into events (organisation_id, project_id, agent_id, type, payload, occurred_at)
+         values ($1,$2,$3,'comm.subagent_spawned',$4,now())`,
+        [a.orgId, a.projectId, parent, JSON.stringify({ parent_agent_id: parent, child_agent_id: child })]);
+    }
+    const res = await get(`/api/projects/${a.projectId}/comm-graph`, cookieA);
+    const graph = await res.json();
+    expect(graph.nodes.map((n: any) => n.id)).toContain(parent);
+    const edge = graph.edges.find((e: any) => e.from === parent && e.to === child);
+    expect(edge).toMatchObject({ kind: "spawn", count: 2 });
+  });
+
   it("schedule returns proj_schedule rows", async () => {
     const wi = (await db.servicePool.query(
       "select id from work_items where project_id=$1 limit 1", [a.projectId])).rows[0].id;
