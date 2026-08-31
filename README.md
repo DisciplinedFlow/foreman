@@ -1,30 +1,72 @@
 # Foreman
 
-A Node.js monorepo for project management infrastructure.
+Foreman is a control plane for fleets of AI coding agents: a work queue agents claim from over
+MCP, passive telemetry that makes any Claude Code session visible in seconds, bidirectional
+GitHub sync (issues, Projects v2, check runs), a live Gantt with critical path, stall detection,
+human↔agent checkpoints and directives, reproducible daily briefs, a living evidence-backed
+project overview, and an API-endpoint lifecycle view — all built on an append-only event log
+with row-level-security tenancy.
 
-## Development
+Specs: [`docs/PRD-Foreman.md`](docs/PRD-Foreman.md) · [`docs/SPEC-Foreman.md`](docs/SPEC-Foreman.md) ·
+executed phase plans in [`docs/superpowers/plans/`](docs/superpowers/plans/) ·
+**[Quickstart](docs/quickstart.md)** for the end-to-end setup path.
+
+## Architecture
+
+```
+foreman-mcp ────┐
+foreman-ingest ─┼─► events (append-only) ─► foreman-projector ─► projections ─► foreman-api ─► web UI
+foreman-github ─┘                                   │
+                                                    └─► foreman-scheduler ─► events (derived)
+```
+
+| Service | Dir | Port | Role |
+|---|---|---|---|
+| foreman-mcp | `apps/mcp` | 8811 (`PORT`) | MCP server agents connect to (tools + tasks surface) |
+| foreman-ingest | `apps/ingest` | 3004 | Claude Code hook receiver (observe-only telemetry) |
+| foreman-api | `apps/api` | 3003 | Web BFF: RLS-scoped REST + per-project SSE |
+| foreman-github | `apps/github` | 3002 | GitHub App: webhooks, sync worker, manifest onboarding |
+| foreman-scheduler | `apps/scheduler` | — | Leases, stall detection, briefs, reconciliation, regen push |
+| foreman-projector | `apps/projector` | — | Event log → projections (critical path, health) |
+| foreman-gen | `apps/gen` | — | Brief assembly/delivery + living overview (library; crons run in scheduler) |
+| web UI | `apps/web` | 5173 | React: Gantt, Agents, Graph, Overview, Lifecycle |
+
+Packages: `@foreman/events` (schema registry), `@foreman/db` (migrations, RLS, queue),
+`@foreman/github-client` (REST/GraphQL, rate budget, echo cache), `@foreman/backbone`
+(work-backbone seam), `@foreman/agent-sdk` (Claude Agent SDK options transformer).
+Integrations: `integrations/claude-code-plugin` (hooks + MCP + skill).
+
+## Dev loop
 
 ```bash
 pnpm install
-pnpm build
-pnpm test
+pnpm db:up          # Postgres 16 :5433, Redis 7 :6380 (docker compose)
+pnpm db:migrate     # create + migrate the `foreman` database
+pnpm db:seed        # dev org/user/project + a fresh agent token (printed)
+pnpm test           # full suite (throwaway DB per test file)
 pnpm typecheck
+pnpm --filter foreman-web test:e2e   # browser smoke + GNT-9 scroll harness (playwright)
+pnpm --filter foreman-mcp test:load  # §10 load harness (100 agents, 2,000 items)
 ```
 
-## Services
+## Environment variables
 
-Start Postgres and Redis:
-
-```bash
-pnpm db:up
-```
-
-Stop services:
-
-```bash
-pnpm db:down
-```
-
-Services:
-- PostgreSQL 16 on port 5433
-- Redis 7 on port 6380
+| Variable | Default | Used by |
+|---|---|---|
+| `DATABASE_URL` | `postgres://foreman_service:foreman_service@localhost:5433/foreman` (mcp: **required**) | all services |
+| `DATABASE_URL_APP` | `postgres://foreman_app:foreman_app@localhost:5433/foreman` | api (RLS role) |
+| `DATABASE_URL_ADMIN` | `postgres://postgres:postgres@localhost:5433/postgres` | db:migrate |
+| `PORT` / `FOREMAN_API_PORT` / `FOREMAN_GITHUB_PORT` / `FOREMAN_INGEST_PORT` | 8811 / 3003 / 3002 / 3004 | mcp / api / github / ingest |
+| `FOREMAN_SESSION_SECRET` | `dev-only-secret` | api cookies, github setup state |
+| `FOREMAN_PUBLIC_URL` | `http://localhost:3002` | github manifest flow |
+| `REDIS_URL` | unset (in-memory Kv) | github worker echo/rate caches |
+| `FOREMAN_MASTER_KEY` | unset (plaintext keys) | 64-hex AES key sealing GitHub App PEMs |
+| `FOREMAN_SMTP_URL` / `FOREMAN_SMTP_FROM` | unset (log mailer) / `foreman@localhost` | brief email delivery |
+| `ANTHROPIC_API_KEY` / `FOREMAN_OVERVIEW_MODEL` | unset (extractive) / `claude-opus-5` | overview prose generation |
+| `SWEEP_INTERVAL_MS` | 30000 | lease sweeper |
+| `FOREMAN_STALL_INTERVAL_SEC` | 60 | stall detection (0 off) |
+| `FOREMAN_BRIEF_TICK_SEC` | 60 | brief schedule tick (0 off) |
+| `FOREMAN_RECONCILE_INTERVAL_SEC` | 3600 | GitHub full-sync + lifecycle rescan (0 off) |
+| `FOREMAN_OVERVIEW_INTERVAL_SEC` | 0 (off; push covers it) | overview cron |
+| `FOREMAN_PUSH_DEBOUNCE_MS` | 2000 | work.completed → regen push ("0" off) |
+| `NODE_ENV` | — | `production` enables `__Host-` Secure cookies, disables dev-login |
