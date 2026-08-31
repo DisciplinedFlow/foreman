@@ -477,6 +477,84 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
     return res.status(202).json({ queued: true });
   }));
 
+  // PRD §1.7 — deterministic reads over the event log; `now` is caller-suppliable
+  // so the numbers are reproducible (BRF-7 spirit).
+  api.get("/projects/:id/metrics", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const nowParam = typeof req.query.now === "string" ? Date.parse(req.query.now) : NaN;
+    const now = Number.isNaN(nowParam) ? new Date() : new Date(nowParam);
+    const week = (n: number) => new Date(now.getTime() - n * 7 * 86400_000);
+    const dayAgo = new Date(now.getTime() - 86400_000);
+
+    const body = await withUser(deps.appPool, userId, async (tx) => {
+      const proj = await tx.query("select 1 from projects where id = $1", [req.params.id]);
+      if (proj.rowCount === 0) return null;
+      const p = req.params.id;
+
+      const completions = await tx.query(
+        `select
+           count(*) filter (where occurred_at >= $2 and occurred_at < $3
+             and jsonb_array_length(payload->'acceptance_results') > 0)::int as this_week,
+           count(*) filter (where occurred_at >= $4 and occurred_at < $2
+             and jsonb_array_length(payload->'acceptance_results') > 0)::int as last_week,
+           count(*) filter (where occurred_at >= $2 and occurred_at < $3)::int as all_this_week
+         from events where project_id = $1 and type = 'work.completed'`,
+        [p, week(1), now, week(2)]);
+
+      const stalls = await tx.query(
+        `select extract(epoch from (recorded_at - (payload->>'last_transition_at')::timestamptz)) * 1000 as ms
+         from events where project_id = $1 and type = 'agent.stalled'
+           and occurred_at >= $2 and occurred_at < $3 order by ms`, [p, week(1), now]);
+      const stallMs = stalls.rows.map((r: any) => Math.round(Number(r.ms)));
+
+      const active = await tx.query(
+        `select count(distinct agent_id)::int as n from events
+         where project_id = $1 and agent_id is not null and recorded_at >= $2 and recorded_at < $3`,
+        [p, dayAgo, now]);
+
+      const decisions = await tx.query(
+        "select count(*)::int as n from checkpoints where project_id = $1 and status = 'open'", [p]);
+
+      const briefs = await tx.query(
+        `select
+           count(*) filter (where type = 'brief.generated')::int as generated,
+           count(distinct payload->>'brief_id') filter (where type = 'brief.delivered')::int as delivered
+         from events where project_id = $1 and occurred_at >= $2 and occurred_at < $3`, [p, week(1), now]);
+
+      const cost = await tx.query(
+        `select
+           coalesce(sum(cost_usd) filter (where started_at >= $2 and started_at < $3), 0) as usd,
+           coalesce(sum(cost_usd) filter (where started_at >= $4 and started_at < $2), 0) as previous
+         from runs r join agents a on a.id = r.agent_id where a.project_id = $1`,
+        [p, week(1), now, week(2)]);
+
+      const leases = await tx.query(
+        `select count(*)::int as n from events where project_id = $1 and type = 'work.lease_expired'
+           and occurred_at >= $2 and occurred_at < $3`, [p, week(1), now]);
+
+      const pick = (xs: number[], q: number) =>
+        xs.length === 0 ? null : xs[Math.min(xs.length - 1, Math.floor(q * xs.length))]!;
+      return {
+        supervised_throughput: {
+          this_week: completions.rows[0].this_week,
+          last_week: completions.rows[0].last_week,
+          all_completions_this_week: completions.rows[0].all_this_week,
+          method: "completions with acceptance verdicts",
+        },
+        stall_detection: stallMs.length === 0 ? null : {
+          median_ms: pick(stallMs, 0.5), p95_ms: pick(stallMs, 0.95), samples: stallMs.length,
+        },
+        active_agents_24h: active.rows[0].n,
+        open_decisions: decisions.rows[0].n,
+        briefs_7d: { generated: briefs.rows[0].generated, delivered: briefs.rows[0].delivered },
+        cost_7d: { usd: Number(cost.rows[0].usd).toFixed(2), previous_usd: Number(cost.rows[0].previous).toFixed(2) },
+        lease_expiries_7d: leases.rows[0].n,
+      };
+    });
+    if (body === null) return res.status(404).json({ error: "not found" });
+    return res.json(body);
+  }));
+
   api.get("/projects/:id/comm-graph", wrap(async (req, res) => {
     const { userId } = req as AuthedRequest;
     const graph = await withUser(deps.appPool, userId, async (tx) => {

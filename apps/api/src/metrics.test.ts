@@ -1,0 +1,100 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createTestDatabase, seedOrgWithUser, type TestDb } from "@foreman/db/testing";
+import pg from "pg";
+import { createApp } from "./http.js";
+
+let db: TestDb;
+let a: Awaited<ReturnType<typeof seedOrgWithUser>>;
+let appPool: pg.Pool;
+let url: string;
+let cookie: string;
+let close: () => Promise<unknown>;
+
+const NOW = "2026-08-31T12:00:00.000Z";
+const ago = (h: number) => new Date(Date.parse(NOW) - h * 3600_000).toISOString();
+
+beforeAll(async () => {
+  db = await createTestDatabase();
+  a = await seedOrgWithUser(db.servicePool, "metrics");
+  appPool = new pg.Pool({ connectionString: db.appUrl, max: 5 });
+  const app = createApp({ appPool, servicePool: db.servicePool as pg.Pool, secret: "m", devAuth: true });
+  const server = app.listen(0);
+  await new Promise((r) => server.once("listening", r));
+  url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  close = () => new Promise((r) => server.close(r));
+  const login = await fetch(`${url}/auth/dev-login`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "metrics@test.local" }),
+  });
+  cookie = login.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+
+  const ev = (type: string, payload: object, at: string, agentId: string | null = null) =>
+    db.servicePool.query(
+      `insert into events (organisation_id, project_id, agent_id, type, payload, occurred_at, recorded_at)
+       values ($1,$2,$3,$4,$5,$6,$6)`,
+      [a.orgId, a.projectId, agentId, type, JSON.stringify(payload), at]);
+
+  // throughput: 2 verdict completions + 1 bare this week; 1 verdict last week
+  await ev("work.completed", { summary: "x", acceptance_results: [{ criterion: "c", met: true }] }, ago(24));
+  await ev("work.completed", { summary: "y", acceptance_results: [{ criterion: "c", met: true }] }, ago(48));
+  await ev("work.completed", { summary: "bare", acceptance_results: [] }, ago(30));
+  await ev("work.completed", { summary: "old", acceptance_results: [{ criterion: "c", met: true }] }, ago(24 * 9));
+
+  // stall detection: flagged 90s after last transition
+  const agent = (await db.servicePool.query(
+    "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'m-agent','test') returning id",
+    [a.orgId, a.projectId])).rows[0].id;
+  await ev("agent.stalled", { threshold_sec: 60, last_transition_at: ago(2.025) }, ago(2), agent); // 90s gap
+  await ev("agent.heartbeat", { status: "working" }, ago(1), agent); // active in 24h
+
+  // briefs: 1 generated + delivered in window
+  await ev("brief.generated", { brief_id: "00000000-0000-0000-0000-000000000001", window_start: ago(48), window_end: ago(24) }, ago(24));
+  await ev("brief.delivered", { brief_id: "00000000-0000-0000-0000-000000000001", channel: "webhook" }, ago(24));
+
+  // open checkpoint
+  const wi = (await db.servicePool.query(
+    "insert into work_items (organisation_id, project_id, title) values ($1,$2,'m-item') returning id",
+    [a.orgId, a.projectId])).rows[0].id;
+  await db.servicePool.query(
+    `insert into checkpoints (organisation_id, project_id, work_item_id, agent_id, question)
+     values ($1,$2,$3,$4,'metrics q')`, [a.orgId, a.projectId, wi, agent]);
+
+  // cost: 2.00 this week, 0.50 previous week
+  await db.servicePool.query(
+    "insert into runs (organisation_id, agent_id, cost_usd, started_at) values ($1,$2,2.00,$3)",
+    [a.orgId, agent, ago(24)]);
+  await db.servicePool.query(
+    "insert into runs (organisation_id, agent_id, cost_usd, started_at) values ($1,$2,0.50,$3)",
+    [a.orgId, agent, ago(24 * 9)]);
+
+  // one lease expiry in window
+  await ev("work.lease_expired", { agent_id: agent }, ago(3));
+});
+afterAll(async () => { await close(); await appPool.end(); await db.teardown(); });
+
+describe("metrics (PRD §1.7, deterministic)", () => {
+  it("returns the exact golden object for the pinned now", async () => {
+    const res = await fetch(`${url}/api/projects/${a.projectId}/metrics?now=${encodeURIComponent(NOW)}`,
+      { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const m = await res.json();
+    expect(m).toEqual({
+      supervised_throughput: {
+        this_week: 2, last_week: 1, all_completions_this_week: 3,
+        method: "completions with acceptance verdicts",
+      },
+      stall_detection: { median_ms: 90000, p95_ms: 90000, samples: 1 },
+      active_agents_24h: 1,
+      open_decisions: 1,
+      briefs_7d: { generated: 1, delivered: 1 },
+      cost_7d: { usd: "2.00", previous_usd: "0.50" },
+      lease_expiries_7d: 1,
+    });
+  });
+
+  it("cross-org 404s", async () => {
+    const b = await seedOrgWithUser(db.servicePool, "metrics-b");
+    const res = await fetch(`${url}/api/projects/${b.projectId}/metrics`, { headers: { cookie } });
+    expect(res.status).toBe(404);
+  });
+});
