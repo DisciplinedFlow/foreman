@@ -69,6 +69,22 @@ describe("queue engine", () => {
     } finally { await db.teardown(); }
   });
 
+  it("QUE-5: project-scope WIP limit rejects a second agent once the project cap is hit", async () => {
+    const db = await createTestDatabase();
+    try {
+      const { orgId, projectId } = await seedOrgWithUser(db.servicePool, "q5-project");
+      await db.servicePool.query("update projects set wip_limit = 1 where id = $1", [projectId]);
+      await enqueueWorkItem(db.servicePool, { organisationId: orgId, projectId, title: "1" });
+      await enqueueWorkItem(db.servicePool, { organisationId: orgId, projectId, title: "2" });
+      const a = await seedAgent(db.servicePool, orgId, projectId, "a", 5);
+      const b = await seedAgent(db.servicePool, orgId, projectId, "b", 5);
+      await claimNextWorkItem(db.servicePool, { projectId, agentId: a });
+      const err = await claimNextWorkItem(db.servicePool, { projectId, agentId: b }).catch(e => e);
+      expect(err).toBeInstanceOf(WipLimitExceededError);
+      expect(err.scope).toBe("project");
+    } finally { await db.teardown(); }
+  });
+
   it("QUE-4: expired lease requeues at original priority and logs work.lease_expired", async () => {
     const db = await createTestDatabase();
     try {
