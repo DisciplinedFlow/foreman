@@ -11,5 +11,13 @@ export async function enqueueReconcileJobs(q: Queryable): Promise<number> {
             'foreman.reconcile', jsonb_build_object('project_id', id)
      from projects
      where gh_project_node_id is not null and gh_installation_id is not null`);
-  return res.rowCount ?? 0;
+  // LFC: the same cadence keeps endpoint states fresh (repos, not project boards).
+  const scans = await q.query(
+    `insert into sync_jobs (organisation_id, installation_id, delivery_id, event_name, payload)
+     select organisation_id, coalesce(gh_installation_id, 0),
+            'lifecycle:' || id || ':' || extract(epoch from now())::bigint,
+            'foreman.lifecycle_scan', jsonb_build_object('project_id', id)
+     from projects
+     where cardinality(gh_repos) > 0 and gh_installation_id is not null`);
+  return (res.rowCount ?? 0) + (scans.rowCount ?? 0);
 }

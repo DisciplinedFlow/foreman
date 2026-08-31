@@ -152,7 +152,7 @@ describe("round-trip with echo suppression (SPEC §9 week-7 done-when)", () => {
 
   it("reconciliation cron: enqueue + drain routes foreman.reconcile to fullSync", async () => {
     const n = await enqueueReconcileJobs(db.servicePool);
-    expect(n).toBe(1);
+    expect(n).toBe(2); // foreman.reconcile + foreman.lifecycle_scan (Phase 6)
     const itemsQueriesBefore = requests.filter((r) => r.path === "/graphql" && r.body?.query?.includes("items(")).length;
     await drain({ echo, gh });
     const itemsQueriesAfter = requests.filter((r) => r.path === "/graphql" && r.body?.query?.includes("items(")).length;

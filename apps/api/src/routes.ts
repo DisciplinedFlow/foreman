@@ -311,6 +311,20 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
     res.json(result);
   }));
 
+  api.post("/projects/:id/lifecycle/scan", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const proj = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        "select organisation_id, gh_installation_id from projects where id = $1", [req.params.id])).rows[0] ?? null);
+    if (proj === null) return res.status(404).json({ error: "not found" });
+    await deps.servicePool.query(
+      `insert into sync_jobs (organisation_id, installation_id, delivery_id, event_name, payload)
+       values ($1,$2,$3,'foreman.lifecycle_scan',$4)`,
+      [proj.organisation_id, proj.gh_installation_id ?? 0,
+       `lifecycle:${req.params.id}:${Date.now()}`, JSON.stringify({ project_id: req.params.id })]);
+    return res.status(202).json({ queued: true });
+  }));
+
   api.get("/projects/:id/comm-graph", wrap(async (req, res) => {
     const { userId } = req as AuthedRequest;
     const graph = await withUser(deps.appPool, userId, async (tx) => {
