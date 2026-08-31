@@ -60,7 +60,8 @@ describe("foreman plugin package", () => {
 
   it("the skill teaches the work loop", () => {
     const skill = readFileSync(join(root, "skills/foreman/SKILL.md"), "utf8");
-    expect(skill.startsWith("---\nname: foreman")).toBe(true);
+    // line-ending agnostic: git on Windows checks the file out with CRLF
+    expect(/^---\r?\nname: foreman/.test(skill)).toBe(true);
     for (const tool of ["foreman__agent_announce", "foreman__work_claim", "foreman__work_report",
       "foreman__work_checkpoint", "foreman__work_complete"]) {
       expect(skill).toContain(tool);
