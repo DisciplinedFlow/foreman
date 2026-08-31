@@ -311,6 +311,21 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
     res.json(result);
   }));
 
+  api.get("/projects/:id/lifecycle", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const endpoints = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        `select id, gh_repo, method, path, state, evidence, work_item_ids, in_spec, has_impl, has_test, state_changed_at
+         from endpoints where project_id = $1 order by path, method`, [req.params.id])).rows);
+    // LFC-4: three set differences over the flags
+    const gaps = {
+      untested: endpoints.filter((e: any) => e.has_impl && !e.has_test && e.state !== "deprecated").length,
+      unimplemented: endpoints.filter((e: any) => e.in_spec && !e.has_impl && e.state !== "deprecated").length,
+      unspecced: endpoints.filter((e: any) => e.has_impl && !e.in_spec && e.state !== "deprecated").length,
+    };
+    res.json({ endpoints, gaps });
+  }));
+
   api.post("/projects/:id/lifecycle/scan", wrap(async (req, res) => {
     const { userId } = req as AuthedRequest;
     const proj = await withUser(deps.appPool, userId, async (tx) =>

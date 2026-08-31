@@ -297,6 +297,30 @@ describe("api routes", () => {
     expect(revs.revisions[0].caused_by).toBe("human");
   });
 
+  it("lifecycle read computes gaps; scan POST enqueues; cross-org 404s (LFC-4)", async () => {
+    const ep = async (method: string, path: string, over: object) => db.servicePool.query(
+      `insert into endpoints (organisation_id, project_id, gh_repo, method, path, state, evidence, in_spec, has_impl, has_test)
+       values ($1,$2,'o/r',$3,$4,$5,$6,$7,$8,$9)`,
+      [a.orgId, a.projectId, method, path,
+        (over as any).state ?? "implemented", "[]",
+        (over as any).in_spec ?? false, (over as any).has_impl ?? true, (over as any).has_test ?? false]);
+    await ep("GET", "/lc/a", { has_test: false });                       // untested + unspecced
+    await ep("POST", "/lc/b", { in_spec: true, has_impl: false, state: "planned" }); // unimplemented
+    await ep("PUT", "/lc/c", { in_spec: true, has_test: true, state: "tested" });    // clean
+
+    const res = await (await get(`/api/projects/${a.projectId}/lifecycle`, cookieA)).json();
+    expect(res.endpoints.length).toBe(3);
+    expect(res.gaps).toEqual({ untested: 1, unimplemented: 1, unspecced: 1 });
+
+    const scan = await fetch(`${url}/api/projects/${a.projectId}/lifecycle/scan`, { method: "POST", headers: mut() });
+    expect(scan.status).toBe(202);
+    expect((await db.servicePool.query(
+      "select 1 from sync_jobs where event_name='foreman.lifecycle_scan'")).rowCount).toBe(1);
+
+    const forbidden = await fetch(`${url}/api/projects/${b.projectId}/lifecycle/scan`, { method: "POST", headers: mut() });
+    expect(forbidden.status).toBe(404);
+  });
+
   it("comm-graph aggregates spawn events into weighted edges", async () => {
     const parent = (await db.servicePool.query(
       "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'parent','test') returning id",

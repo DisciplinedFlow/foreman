@@ -5,6 +5,7 @@ import { AgentTable, type AgentRow } from "../agents/AgentTable.js";
 import { DecisionCards, type CheckpointRow } from "../checkpoints/DecisionCards.js";
 import { CommGraph, type CommNode, type CommEdge } from "../graph/CommGraph.js";
 import { OverviewTab, type OverviewSection, type OverviewRevision } from "../overview/OverviewTab.js";
+import { LifecycleTab, type EndpointRow, type LifecycleGaps } from "../lifecycle/LifecycleTab.js";
 import { Gantt } from "../gantt/Gantt.js";
 import { mergeSchedule, type GanttItem } from "../gantt/layout.js";
 
@@ -21,7 +22,9 @@ export function ProjectView() {
   const { id } = useParams();
   const projectId = id!;
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"gantt" | "agents" | "graph" | "overview">("gantt");
+  const [tab, setTab] = useState<"gantt" | "agents" | "graph" | "overview" | "lifecycle">("gantt");
+  const [lifecycle, setLifecycle] = useState<{ endpoints: EndpointRow[]; gaps: LifecycleGaps } | null>(null);
+  const [scanQueued, setScanQueued] = useState(false);
   const [overview, setOverview] = useState<OverviewSection[]>([]);
   const [revisions, setRevisions] = useState<Record<string, OverviewRevision[]>>({});
   const [regenBusy, setRegenBusy] = useState(false);
@@ -90,6 +93,13 @@ export function ProjectView() {
 
   useEffect(() => { if (tab === "overview") loadOverview(); }, [tab, loadOverview]);
 
+  useEffect(() => {
+    if (tab !== "lifecycle") return;
+    api<{ endpoints: EndpointRow[]; gaps: LifecycleGaps }>(`/api/projects/${projectId}/lifecycle`)
+      .then(setLifecycle)
+      .catch(() => {});
+  }, [tab, projectId]);
+
   const onOverviewOverride = (sectionId: string, body: { content?: string; pinned?: boolean }) => {
     api(`/api/projects/${projectId}/overview/${sectionId}`, {
       method: "PUT", headers: { "content-type": "application/json" },
@@ -118,7 +128,8 @@ export function ProjectView() {
         <button onClick={() => setTab("gantt")} disabled={tab === "gantt"}>Gantt</button>{" "}
         <button onClick={() => setTab("agents")} disabled={tab === "agents"}>Agents</button>{" "}
         <button onClick={() => setTab("graph")} disabled={tab === "graph"}>Graph</button>{" "}
-        <button onClick={() => setTab("overview")} disabled={tab === "overview"}>Overview</button>
+        <button onClick={() => setTab("overview")} disabled={tab === "overview"}>Overview</button>{" "}
+        <button onClick={() => setTab("lifecycle")} disabled={tab === "lifecycle"}>Lifecycle</button>
       </nav>
       {tab === "gantt" && <Gantt items={ganttItems} deps={deps} onReschedule={onReschedule} />}
       {tab === "agents" && (
@@ -132,6 +143,17 @@ export function ProjectView() {
       {tab === "graph" && (graph !== null
         ? <CommGraph nodes={graph.nodes} edges={graph.edges} />
         : <p>No communication data yet.</p>)}
+      {tab === "lifecycle" && (
+        <LifecycleTab
+          endpoints={lifecycle?.endpoints ?? []}
+          gaps={lifecycle?.gaps ?? { untested: 0, unimplemented: 0, unspecced: 0 }}
+          scanning={scanQueued}
+          onScan={() => {
+            setScanQueued(true);
+            api(`/api/projects/${projectId}/lifecycle/scan`, { method: "POST" })
+              .finally(() => setTimeout(() => setScanQueued(false), 3000));
+          }} />
+      )}
       {tab === "overview" && (
         <OverviewTab sections={overview} onOverride={onOverviewOverride}
           onRegenerate={onOverviewRegenerate} busy={regenBusy}
