@@ -6,6 +6,7 @@ import { createReceiver } from "./receiver.js";
 import { claimSyncJob, completeSyncJob } from "./jobs.js";
 import { handleSyncJob, type HandlerContext } from "./handlers/index.js";
 import { GithubBackbone } from "./backbone.js";
+import { mountSetup } from "./setup.js";
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL
@@ -40,7 +41,13 @@ const ctx: HandlerContext = {
 };
 
 const port = Number(process.env.FOREMAN_GITHUB_PORT ?? 3002);
-createReceiver({ pool }).listen(port, () => {
+const receiver = createReceiver({ pool });
+mountSetup(receiver, {
+  pool,
+  secret: process.env.FOREMAN_SESSION_SECRET ?? "dev-only-secret",
+  publicUrl: process.env.FOREMAN_PUBLIC_URL ?? `http://localhost:${port}`,
+});
+receiver.listen(port, () => {
   console.log(`foreman-github webhook receiver on :${port}`);
 });
 
