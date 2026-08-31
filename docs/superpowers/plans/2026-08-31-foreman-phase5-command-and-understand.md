@@ -1,5 +1,12 @@
 # Foreman Phase 5 — Directives, Brief Delivery, Living Overview, Agent SDK Implementation Plan
 
+> **EXECUTED 31-08-2026** — all 12 tasks landed on main (commits 95f2858..d372b9d), 204 tests green.
+> Deviations from plan text: `AnthropicLlm` uses the official `@anthropic-ai/sdk` (^0.122.0), not raw
+> fetch — the claude-api skill mandates the SDK, model `claude-opus-5`, server-side refusal fallbacks
+> on by default, and refusal stop-reason handling; Tasks 7+8 landed as one commit (one module);
+> `apps/api` gained a runtime dep on `foreman-gen/lib` for the inline manual regenerate (the seam
+> stays — a gen worker can absorb it later).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Command the fleet and understand the project — PM actions from the UI reach agents through the heartbeat channel (AVW-5), briefs fire on tenant schedules and actually arrive (BRF-1/4), a living evidence-bound overview regenerates incrementally and feeds back to agents via `context.get` (OVW-1..6), and `@foreman/agent-sdk` makes SDK fleets one-wrapper onboardable (§4.4, gate 9).
