@@ -1,6 +1,7 @@
 import pg from "pg";
 import { sweepExpiredLeases, enqueueReconcileJobs } from "@foreman/db";
 import { detectStalls } from "./stall.js";
+import { watchPush } from "./push.js";
 import { generateBrief, briefDue, deliverBrief, mailerFromEnv, regenerateOverview, llmFromEnv } from "foreman-gen/lib";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
@@ -66,6 +67,13 @@ if (STALL_SEC > 0) {
       .then(n => n && console.log(`flagged ${n} stalled agents`))
       .catch(err => console.error("stall sweep failed", err));
   }, STALL_SEC * 1000);
+}
+
+// OVW-2 push: overview + lifecycle refresh on work.completed. "0" disables.
+const PUSH_MS = process.env.FOREMAN_PUSH_DEBOUNCE_MS ?? "2000";
+if (PUSH_MS !== "0") {
+  watchPush(pool, { llm: llmFromEnv(), debounceMs: Number(PUSH_MS) })
+    .catch(err => console.error("push watcher crashed", err));
 }
 
 console.log("foreman-scheduler: lease sweeper running");
