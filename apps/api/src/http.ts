@@ -2,12 +2,14 @@ import express from "express";
 import type pg from "pg";
 import { COOKIE_NAME, signSession, verifySession } from "./auth.js";
 import { mountRoutes } from "./routes.js";
+import { mountStream, type EventHub } from "./stream.js";
 
 export interface ApiDeps {
   appPool: pg.Pool;      // foreman_app — RLS-enforced, serves every user-facing read
-  servicePool: pg.Pool;  // foreman_service — pre-auth user lookup + sync_jobs enqueue only
+  servicePool: pg.Pool;  // foreman_service — pre-auth user lookup, sync_jobs enqueue, SSE reads
   secret: string;
   devAuth: boolean;
+  hub?: EventHub;        // absent → /stream responds 503
 }
 
 export interface AuthedRequest extends express.Request {
@@ -52,6 +54,7 @@ export function createApp(deps: ApiDeps): express.Express {
   const api = express.Router();
   api.use(requireUser);
   mountRoutes(api, deps);
+  mountStream(api, deps);
   app.use("/api", api);
 
   return app;
