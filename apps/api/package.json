@@ -17,7 +17,8 @@
     "pg": "^8.13.0",
     "zod": "^3.23.0",
     "@foreman/db": "workspace:*",
-    "@foreman/events": "workspace:*"
+    "@foreman/events": "workspace:*",
+    "foreman-gen": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

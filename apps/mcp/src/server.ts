@@ -367,9 +367,10 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
   });
 
   server.registerTool("foreman__context_get", {
-    description: "Get a snapshot of the project's work item counts by status.",
+    description: "Get project context: work item counts and the living overview sections — "
+      + "what has been built and the conventions to follow. Read this before starting work.",
     inputSchema: { sections: z.array(z.string()).optional() },
-  }, async () => {
+  }, async ({ sections }) => {
     const proj = await pool.query("select id, name from projects where id = $1", [ctx.projectId]);
     if (!proj.rowCount) return err("not_found", "project not found");
     const counts = await pool.query(
@@ -378,7 +379,20 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
     for (const row of counts.rows) {
       if (row.status in buckets) buckets[row.status as keyof typeof buckets] = row.n;
     }
-    return ok({ project: { id: proj.rows[0].id, name: proj.rows[0].name }, counts: buckets });
+    // §3.2: the living overview feeds back to agents — what we've built shapes
+    // what you build next.
+    const overview = sections !== undefined && sections.length > 0
+      ? await pool.query(
+          `select section_id, content, pinned from overview_sections
+           where project_id = $1 and section_id = any($2) order by section_id`, [ctx.projectId, sections])
+      : await pool.query(
+          "select section_id, content, pinned from overview_sections where project_id = $1 order by section_id",
+          [ctx.projectId]);
+    return ok({
+      project: { id: proj.rows[0].id, name: proj.rows[0].name },
+      counts: buckets,
+      sections: overview.rows,
+    });
   });
 
   // Published tasks surface (gate 1: tasks/get, tasks/result, tasks/cancel; no

@@ -247,6 +247,39 @@ describe("api routes", () => {
     expect(briefs[0].content).toEqual({ window: {} });
   });
 
+  it("overview: regenerate → list → human override bumps version and pins", async () => {
+    await db.servicePool.query(
+      "insert into work_items (organisation_id, project_id, title, status) values ($1,$2,'ov item','in_progress')",
+      [a.orgId, a.projectId]);
+    const regen = await fetch(`${url}/api/projects/${a.projectId}/overview/regenerate`, {
+      method: "POST", headers: { cookie: cookieA } });
+    expect(regen.status).toBe(200);
+    const { regenerated } = await regen.json();
+    expect(regenerated).toContain("in_flight");
+
+    const list = await (await get(`/api/projects/${a.projectId}/overview`, cookieA)).json();
+    const inFlight = list.sections.find((s: any) => s.section_id === "in_flight");
+    expect(inFlight.version).toBe(1);
+    expect(inFlight.sources.length).toBeGreaterThan(0);
+
+    const put = await fetch(`${url}/api/projects/${a.projectId}/overview/in_flight`, {
+      method: "PUT", headers: { "content-type": "application/json", cookie: cookieA },
+      body: JSON.stringify({ content: "our edit", pinned: true }),
+    });
+    expect(put.status).toBe(200);
+    const after = await (await get(`/api/projects/${a.projectId}/overview`, cookieA)).json();
+    const edited = after.sections.find((s: any) => s.section_id === "in_flight");
+    expect(edited).toMatchObject({ content: "our edit", pinned: true, human_authored: true, version: 2 });
+    expect((await db.servicePool.query(
+      "select 1 from events where type='human.overrode' and payload->>'subject'='overview:in_flight'")).rowCount).toBe(1);
+
+    const bad = await fetch(`${url}/api/projects/${a.projectId}/overview/nonsense`, {
+      method: "PUT", headers: { "content-type": "application/json", cookie: cookieA },
+      body: JSON.stringify({ pinned: true }),
+    });
+    expect(bad.status).toBe(400);
+  });
+
   it("comm-graph aggregates spawn events into weighted edges", async () => {
     const parent = (await db.servicePool.query(
       "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'parent','test') returning id",

@@ -119,6 +119,17 @@ describe("MCP tasks surface", () => {
     expect(job.rows[0].payload.conclusion).toBe("success");
   });
 
+  it("context_get serves published overview sections (§3.2 loop)", async () => {
+    const { call } = await connect();
+    await db.servicePool.query(
+      `insert into overview_sections (project_id, organisation_id, section_id, version, content, sources, evidence_hash, generator)
+       values ($1,$2,'shipped',1,'we shipped a rate limiter','[{"type":"work_item","ref":"x"}]','h','{"llm":"extractive"}')`,
+      [projectId, orgId]);
+    const ctx = await call("foreman__context_get", { sections: ["shipped"] });
+    expect(ctx.sections).toEqual([{ section_id: "shipped", content: "we shipped a rate limiter", pinned: false }]);
+    expect(ctx.counts).toBeDefined();
+  });
+
   it("heartbeat drains undelivered directives oldest-first, exactly once (AVW-5)", async () => {
     const { call } = await connect();
     const hello = await call("foreman__agent_announce", { display_name: "directed", platform: "test", capabilities: [] });

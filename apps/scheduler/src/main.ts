@@ -1,7 +1,7 @@
 import pg from "pg";
 import { sweepExpiredLeases, enqueueReconcileJobs } from "@foreman/db";
 import { detectStalls } from "./stall.js";
-import { generateBrief, briefDue, deliverBrief } from "foreman-gen/lib";
+import { generateBrief, briefDue, deliverBrief, regenerateOverview, llmFromEnv } from "foreman-gen/lib";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const INTERVAL = Number(process.env.SWEEP_INTERVAL_MS ?? 30_000);
@@ -40,6 +40,22 @@ if (BRIEF_TICK_SEC > 0) {
       }
     })().catch(err => console.error("brief tick failed", err));
   }, BRIEF_TICK_SEC * 1000);
+}
+
+// OVW deviation 2: overview regenerates on a cron (evidence-hash gated, so quiet
+// projects cost nothing). 0 (default) disables.
+const OVERVIEW_SEC = Number(process.env.FOREMAN_OVERVIEW_INTERVAL_SEC ?? 0);
+if (OVERVIEW_SEC > 0) {
+  setInterval(() => {
+    (async () => {
+      const llm = llmFromEnv();
+      const projects = await pool.query("select id from projects");
+      for (const p of projects.rows) {
+        const r = await regenerateOverview(pool, p.id, { llm, causedBy: "cron" });
+        if (r.regenerated.length > 0) console.log(`overview for ${p.id}: regenerated ${r.regenerated.join(",")}`);
+      }
+    })().catch(err => console.error("overview cron failed", err));
+  }, OVERVIEW_SEC * 1000);
 }
 
 // AVW-3: stall sweep. 0 disables.

@@ -1,6 +1,7 @@
 import type express from "express";
 import { z } from "zod";
 import { appendEvent } from "@foreman/db";
+import { SECTIONS, regenerateOverview, llmFromEnv } from "foreman-gen/lib";
 import { withUser } from "./rls.js";
 import type { ApiDeps, AuthedRequest } from "./http.js";
 
@@ -221,6 +222,76 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
         `select id, window_start, window_end, content, generated_at
          from briefs where project_id = $1 order by window_end desc limit $2`, [req.params.id, limit])).rows);
     res.json({ briefs });
+  }));
+
+  api.get("/projects/:id/overview", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const rows = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        `select section_id, version, content, sources, pinned, human_authored, updated_at
+         from overview_sections where project_id = $1`, [req.params.id])).rows);
+    const order = new Map(SECTIONS.map((s, i) => [s as string, i]));
+    rows.sort((x: any, y: any) => (order.get(x.section_id) ?? 99) - (order.get(y.section_id) ?? 99));
+    res.json({ sections: rows });
+  }));
+
+  // OVW-5: human override — edited content survives regeneration (pin it to be sure).
+  api.put("/projects/:id/overview/:sectionId", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const sectionId = req.params.sectionId ?? "";
+    if (!(SECTIONS as readonly string[]).includes(sectionId)) return res.status(400).json({ error: "unknown section" });
+    const content = typeof req.body?.content === "string" ? req.body.content : undefined;
+    const pinned = typeof req.body?.pinned === "boolean" ? req.body.pinned : undefined;
+    if (content === undefined && pinned === undefined) return res.status(400).json({ error: "content or pinned required" });
+
+    const section = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        `select s.organisation_id, s.version, s.sources from overview_sections s
+         where s.project_id = $1 and s.section_id = $2`, [req.params.id, sectionId])).rows[0] ?? null);
+    if (section === null) return res.status(404).json({ error: "section not published yet" });
+
+    const client = await deps.servicePool.connect();
+    try {
+      await client.query("begin");
+      const version = content !== undefined ? Number(section.version) + 1 : Number(section.version);
+      await client.query(
+        `update overview_sections set
+           content = coalesce($3, content),
+           pinned = coalesce($4, pinned),
+           human_authored = case when $3 is not null then true else human_authored end,
+           version = $5, updated_at = now()
+         where project_id = $1 and section_id = $2`,
+        [req.params.id, sectionId, content ?? null, pinned ?? null, version]);
+      if (content !== undefined) {
+        await client.query(
+          `insert into overview_revisions (organisation_id, project_id, section_id, version, content, sources, caused_by)
+           values ($1,$2,$3,$4,$5,$6,'human')`,
+          [section.organisation_id, req.params.id, sectionId, version, content, JSON.stringify(section.sources)]);
+      }
+      await appendEvent(client, {
+        organisation_id: section.organisation_id, project_id: req.params.id,
+        type: "human.overrode",
+        payload: { actor_user_id: userId, subject: `overview:${sectionId}` },
+      });
+      await client.query("commit");
+    } catch (err) {
+      await client.query("rollback").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+    return res.json({ ok: true });
+  }));
+
+  api.post("/projects/:id/overview/regenerate", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const visible = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query("select 1 from projects where id = $1", [req.params.id])).rowCount !== 0);
+    if (!visible) return res.status(404).json({ error: "not found" });
+    const result = await regenerateOverview(deps.servicePool, req.params.id ?? "", {
+      llm: llmFromEnv(), causedBy: "manual",
+    });
+    res.json(result);
   }));
 
   api.get("/projects/:id/comm-graph", wrap(async (req, res) => {
