@@ -1,9 +1,11 @@
+import { EventEmitter } from "node:events";
 import pg from "pg";
 import { createClient } from "redis";
 import { InMemoryKv, RedisKv, EchoCache, GithubClient, InstallationTokenSource, type Kv } from "@foreman/github-client";
 import { createReceiver } from "./receiver.js";
 import { claimSyncJob, completeSyncJob } from "./jobs.js";
 import { handleSyncJob, type HandlerContext } from "./handlers/index.js";
+import { GithubBackbone } from "./backbone.js";
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL
@@ -29,9 +31,12 @@ const tokens = new InstallationTokenSource({
     return { privateKeyPem: r.rows[0].private_key_pem };
   },
 });
+const echo = new EchoCache(kv);
+const gh = new GithubClient({ tokens, kv });
 const ctx: HandlerContext = {
-  echo: new EchoCache(kv),
-  gh: new GithubClient({ tokens, kv }),
+  echo,
+  gh,
+  backbone: new GithubBackbone({ pool, gh, echo, emitter: new EventEmitter() }),
 };
 
 const port = Number(process.env.FOREMAN_GITHUB_PORT ?? 3002);

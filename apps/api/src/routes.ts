@@ -1,6 +1,14 @@
 import type express from "express";
+import { z } from "zod";
 import { withUser } from "./rls.js";
 import type { ApiDeps, AuthedRequest } from "./http.js";
+
+const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const schedulePatch = z.object({
+  start_at: dateStr.optional(),
+  target_at: dateStr.optional(),
+}).strict().refine((s) => s.start_at !== undefined || s.target_at !== undefined,
+  { message: "at least one of start_at/target_at required" });
 
 // All reads run under withUser: RLS scopes rows, handlers never filter by org.
 export function mountRoutes(api: express.Router, deps: ApiDeps): void {
@@ -62,6 +70,30 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
         `select work_item_id, earliest_start, earliest_finish, latest_start, latest_finish, slack, critical
          from proj_schedule where project_id = $1 order by earliest_start`, [req.params.id])).rows);
     res.json({ schedule });
+  }));
+
+  // GNT-8, deviation 4: the api never writes GitHub — it enqueues a sync job the
+  // github worker executes through GithubBackbone (single GitHub writer).
+  api.patch("/items/:id/schedule", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const parsed = schedulePatch.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid" });
+
+    // Visibility check under RLS: 404 before anything is enqueued.
+    const item = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        `select w.id, w.organisation_id, p.gh_installation_id
+         from work_items w join projects p on p.id = w.project_id where w.id = $1`,
+        [req.params.id])).rows[0] ?? null);
+    if (item === null) return res.status(404).json({ error: "not found" });
+
+    await deps.servicePool.query(
+      `insert into sync_jobs (organisation_id, installation_id, delivery_id, event_name, payload)
+       values ($1,$2,$3,'foreman.schedule_write',$4)`,
+      [item.organisation_id, item.gh_installation_id ?? 0,
+       `schedwrite:${item.id}:${Date.now()}`,
+       JSON.stringify({ work_item_id: item.id, ...parsed.data })]);
+    res.status(202).json({ queued: true });
   }));
 
   api.get("/projects/:id/agents", wrap(async (req, res) => {

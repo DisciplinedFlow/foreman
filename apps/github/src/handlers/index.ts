@@ -1,16 +1,19 @@
 import type { Queryable } from "@foreman/db";
+import type { Backbone } from "@foreman/backbone";
 import { EchoCache, InMemoryKv } from "@foreman/github-client";
 import type { SyncJob } from "../jobs.js";
 import type { GithubClientLike } from "../sync/field-map.js";
 import { fullSync } from "../sync/full-sync.js";
 import { handleIssuesEvent, handlePullRequestEvent } from "./issues.js";
 import { handleProjectItemEvent } from "./project-item.js";
+import { handleScheduleWrite } from "./schedule-write.js";
 
 const fallbackEcho = new EchoCache(new InMemoryKv());
 
 export interface HandlerContext {
   echo?: EchoCache;
   gh?: GithubClientLike;
+  backbone?: Backbone;
 }
 
 export async function handleSyncJob(
@@ -20,6 +23,10 @@ export async function handleSyncJob(
     case "issues": return handleIssuesEvent(tx, job);
     case "pull_request": return handlePullRequestEvent(tx, job);
     case "projects_v2_item": return handleProjectItemEvent(tx, ctx.echo ?? fallbackEcho, job);
+    case "foreman.schedule_write": {
+      if (ctx.backbone === undefined) { console.warn("schedule_write skipped: no backbone wired"); return; }
+      return handleScheduleWrite(job, ctx.backbone);
+    }
     case "foreman.reconcile": {
       if (ctx.gh === undefined) { console.warn("reconcile skipped: no github client wired"); return; }
       const projectId = (job.payload as { project_id?: string } | null)?.project_id;

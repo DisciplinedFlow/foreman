@@ -103,6 +103,46 @@ describe("api routes", () => {
     expect(Number(agents[0].cost_usd)).toBeCloseTo(0.1234);
   });
 
+  it("PATCH schedule enqueues a foreman.schedule_write sync job (202)", async () => {
+    const wi = (await db.servicePool.query(
+      "select id from work_items where project_id=$1 limit 1", [a.projectId])).rows[0].id;
+    const res = await fetch(`${url}/api/items/${wi}/schedule`, {
+      method: "PATCH", headers: { "content-type": "application/json", cookie: cookieA },
+      body: JSON.stringify({ target_at: "2026-09-20" }),
+    });
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ queued: true });
+    const job = await db.servicePool.query(
+      "select payload, organisation_id from sync_jobs where event_name='foreman.schedule_write'");
+    expect(job.rowCount).toBe(1);
+    expect(job.rows[0].organisation_id).toBe(a.orgId);
+    expect(job.rows[0].payload).toEqual({ work_item_id: wi, target_at: "2026-09-20" });
+  });
+
+  it("PATCH schedule on another org's item → 404, no job", async () => {
+    const wi = (await db.servicePool.query(
+      `insert into work_items (organisation_id, project_id, title) values ($1,$2,'b item') returning id`,
+      [b.orgId, b.projectId])).rows[0].id;
+    const res = await fetch(`${url}/api/items/${wi}/schedule`, {
+      method: "PATCH", headers: { "content-type": "application/json", cookie: cookieA },
+      body: JSON.stringify({ target_at: "2026-09-20" }),
+    });
+    expect(res.status).toBe(404);
+    const jobs = await db.servicePool.query(
+      "select 1 from sync_jobs where event_name='foreman.schedule_write' and organisation_id=$1", [b.orgId]);
+    expect(jobs.rowCount).toBe(0);
+  });
+
+  it("PATCH schedule with a malformed date → 400", async () => {
+    const wi = (await db.servicePool.query(
+      "select id from work_items where project_id=$1 limit 1", [a.projectId])).rows[0].id;
+    const res = await fetch(`${url}/api/items/${wi}/schedule`, {
+      method: "PATCH", headers: { "content-type": "application/json", cookie: cookieA },
+      body: JSON.stringify({ target_at: "soon" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("schedule returns proj_schedule rows", async () => {
     const wi = (await db.servicePool.query(
       "select id from work_items where project_id=$1 limit 1", [a.projectId])).rows[0].id;
