@@ -82,9 +82,24 @@ importers:
         specifier: ^3.23.0
         version: 3.25.76
     devDependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.30.0
+        version: 1.30.0(zod@3.25.76)
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
       '@types/pg':
         specifier: ^8.11.0
         version: 8.23.1
+      express:
+        specifier: ^4.21.2
+        version: 4.22.2
+      foreman-api:
+        specifier: workspace:*
+        version: link:../api
+      foreman-mcp:
+        specifier: workspace:*
+        version: link:../mcp
       tsx:
         specifier: ^4.19.0
         version: 4.23.13
