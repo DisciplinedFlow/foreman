@@ -50,9 +50,11 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
     const body = await withUser(deps.appPool, userId, async (tx) => {
       const project = await tx.query("select 1 from projects where id = $1", [req.params.id]);
       if (project.rowCount === 0) return null;
+      // date columns go out as text: pg would parse them to local-midnight Dates,
+      // which JSON-serialize to the previous day in UTC.
       const items = await tx.query(
         `select id, title, status, kind, priority, parent_id, gh_issue_number, gh_repo,
-                start_at, target_at, claimed_by, updated_at
+                start_at::text, target_at::text, claimed_by, updated_at
          from work_items where project_id = $1 order by enqueued_at`, [req.params.id]);
       const deps_ = await tx.query(
         `select d.blocked_id, d.blocker_id from work_item_deps d
