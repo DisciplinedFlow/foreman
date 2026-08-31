@@ -1,5 +1,13 @@
 # Foreman Phase 7 — Load Proof, Event-Driven Regen, Framework Coverage, Docs Implementation Plan
 
+> **EXECUTED 31-08-2026** — all 6 tasks landed on main, 253 tests green. **Load harness numbers**:
+> 100 agents churned 2,000 items in ~27s (69-75 claims/sec) with exactly 2,000 work.claimed
+> events (atomicity holds); **p95 event→SSE 12ms** (p50 3ms, max 17ms) against the 2s bar;
+> backpressure at 2×: 79/200 admitted, 121 clean RateLimitedErrors. The harness caught a real
+> bug: InMemoryKv.incr interleaved across an await — fixed + regression-locked. Deviations:
+> Task 4 grew `pnpm db:migrate`/`db:seed` bootstrap scripts (docs that work beat docs that
+> apologize); the Vibe Kanban memo CONFIRMS the sunset premise (bloop shut down 2026-04-10).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prove v1 at the SPEC §10 load bar (100 concurrent agents, 2,000 items, p95 event→SSE under 2s, claim atomicity, rate backpressure), close the cron-only deviations (overview + lifecycle regenerate on `work.completed`), complete the §6.2 framework table with Django/Rails/Spring extractors, and open the doors: a real README + design-partner quickstart and the §11-item-10 Vibe Kanban research memo.
