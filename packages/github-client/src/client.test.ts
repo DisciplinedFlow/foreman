@@ -45,6 +45,29 @@ describe("GithubClient", () => {
     await expect(c.rest(1, 7, "GET", "/repos/o/r/issues/1")).rejects.toBeInstanceOf(RateLimitedError);
   });
 
+  it("fixed-window bucket blocks the request past 80% of the observed limit (GHA-7)", async () => {
+    const kv = new InMemoryKv();
+    // observed limit 10 → 8 requests allowed per hour window
+    const responses = Array.from({ length: 9 }, () => ({
+      status: 200,
+      headers: { "x-ratelimit-limit": "10", "x-ratelimit-remaining": "9",
+        "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 3600) },
+    }));
+    const { f, seen } = stub(responses);
+    const c = new GithubClient({ tokens, kv, fetchImpl: f, apiBase: "https://gh.test" });
+    for (let i = 0; i < 8; i++) await c.rest(1, 7, "GET", `/repos/o/r/issues/${i}`);
+    await expect(c.rest(1, 7, "GET", "/repos/o/r/issues/9")).rejects.toBeInstanceOf(RateLimitedError);
+    expect(seen.length).toBe(8);
+  });
+
+  it("no observed limit yet → the bucket does not block", async () => {
+    const kv = new InMemoryKv();
+    const { f, seen } = stub(Array.from({ length: 3 }, () => ({ status: 200 })));
+    const c = new GithubClient({ tokens, kv, fetchImpl: f, apiBase: "https://gh.test" });
+    for (let i = 0; i < 3; i++) await c.rest(1, 7, "GET", `/x/${i}`);
+    expect(seen.length).toBe(3);
+  });
+
   it("graphql() posts to /graphql, returns data, throws GithubGraphqlError on errors", async () => {
     const { f, seen } = stub([
       { status: 200, body: { data: { viewer: { login: "x" } } } },

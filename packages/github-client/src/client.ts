@@ -38,6 +38,15 @@ export class GithubClient {
       const { remaining, limit, reset } = JSON.parse(raw) as { remaining: number; limit: number; reset: number };
       if (remaining < 0.2 * limit && reset > nowSec) throw new RateLimitedError(reset);
     }
+    // GHA-7 (Phase 6 deviation 6): fixed-window counter at 80% of the observed
+    // hourly limit, atomic across instances via Kv.incr. Engages once a limit
+    // has been observed; the header floor above stays as the outer guard.
+    const window = Math.floor(nowSec / 3600);
+    const count = await this.opts.kv.incr(`ghwin:${installationId}:${window}`, 3600);
+    const observed = await this.opts.kv.get(`ghlimit:${installationId}`);
+    if (observed !== null && count > 0.8 * Number(observed)) {
+      throw new RateLimitedError((window + 1) * 3600);
+    }
   }
 
   private async postflight(installationId: number, res: Response): Promise<void> {
@@ -58,6 +67,7 @@ export class GithubClient {
       await this.opts.kv.set(`ghrate:${installationId}`,
         JSON.stringify({ remaining: Number(remaining), limit: Number(limit), reset: Number(reset) }), ttl);
     }
+    if (limit !== null) await this.opts.kv.set(`ghlimit:${installationId}`, limit, 3600);
   }
 
   private async request(appId: number, installationId: number, method: string, path: string, body?: unknown): Promise<Response> {
