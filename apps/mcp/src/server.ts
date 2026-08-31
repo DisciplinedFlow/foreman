@@ -135,7 +135,7 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
   }, async ({ status, current_tool, current_work_item_id }) => {
     if (!ctx.agentId) return NOT_ANNOUNCED;
     const agentId = ctx.agentId;
-    await withTx(pool, async (c) => {
+    return withTx(pool, async (c) => {
       const prior = await c.query("select status from agents where id = $1 for update", [agentId]);
       await c.query("update agents set status = $1, last_seen_at = now() where id = $2", [status, agentId]);
       if (current_work_item_id) await extendLease(c, current_work_item_id, agentId);
@@ -150,8 +150,15 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
         organisation_id: ctx.organisationId, project_id: ctx.projectId, agent_id: agentId,
         type: "agent.heartbeat", payload: { status, current_tool, current_work_item_id },
       });
-    });
-    return ok({ ack: true, directives: [] });
+      // AVW-5: drain undelivered directives exactly once, oldest first.
+      const drained = await c.query(
+        `update directives set delivered_at = now()
+         where agent_id = $1 and delivered_at is null
+         returning id, kind, payload, created_at`, [agentId]);
+      return drained.rows
+        .sort((x: any, y: any) => new Date(x.created_at).getTime() - new Date(y.created_at).getTime())
+        .map((d: any) => ({ id: d.id, kind: d.kind, payload: d.payload, created_at: new Date(d.created_at).toISOString() }));
+    }).then((directives) => ok({ ack: true, directives }));
   });
 
   server.registerTool("foreman__work_claim", {

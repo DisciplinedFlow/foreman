@@ -4,6 +4,12 @@ import { appendEvent } from "@foreman/db";
 import { withUser } from "./rls.js";
 import type { ApiDeps, AuthedRequest } from "./http.js";
 
+const directiveBody = z.object({
+  kind: z.enum(["pause", "resume", "cancel_item", "message", "request_checkpoint"]),
+  message: z.string().min(1).optional(),
+  work_item_id: z.string().uuid().optional(),
+}).strict();
+
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const schedulePatch = z.object({
   start_at: dateStr.optional(),
@@ -97,6 +103,71 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
        `schedwrite:${item.id}:${Date.now()}`,
        JSON.stringify({ work_item_id: item.id, ...parsed.data })]);
     res.status(202).json({ queued: true });
+  }));
+
+  // AVW-5: directives are offers drained by the agent's heartbeat, never process control.
+  api.post("/agents/:id/directives", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const parsed = directiveBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid" });
+    const d = parsed.data;
+    if ((d.kind === "message" || d.kind === "request_checkpoint") && d.message === undefined) {
+      return res.status(400).json({ error: "message required for this kind" });
+    }
+    if (d.kind === "cancel_item" && d.work_item_id === undefined) {
+      return res.status(400).json({ error: "work_item_id required for cancel_item" });
+    }
+    const agent = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query("select organisation_id, project_id from agents where id = $1", [req.params.id])).rows[0] ?? null);
+    if (agent === null) return res.status(404).json({ error: "not found" });
+
+    const client = await deps.servicePool.connect();
+    try {
+      await client.query("begin");
+      const ins = await client.query(
+        `insert into directives (organisation_id, project_id, agent_id, kind, payload, created_by)
+         values ($1,$2,$3,$4,$5,$6) returning id`,
+        [agent.organisation_id, agent.project_id, req.params.id, d.kind,
+         JSON.stringify({ ...(d.message !== undefined ? { message: d.message } : {}),
+           ...(d.work_item_id !== undefined ? { work_item_id: d.work_item_id } : {}) }), userId]);
+      await appendEvent(client, {
+        organisation_id: agent.organisation_id, project_id: agent.project_id,
+        type: "human.directed",
+        payload: { actor_user_id: userId, target: req.params.id, directive: d.kind },
+      });
+      await client.query("commit");
+      return res.status(201).json({ directive_id: ins.rows[0].id });
+    } catch (err) {
+      await client.query("rollback").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }));
+
+  api.patch("/items/:id/priority", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const priority = Number(req.body?.priority);
+    if (!Number.isInteger(priority) || priority < 0) return res.status(400).json({ error: "priority must be a non-negative integer" });
+    const item = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query("select organisation_id, project_id, priority from work_items where id = $1", [req.params.id])).rows[0] ?? null);
+    if (item === null) return res.status(404).json({ error: "not found" });
+    const client = await deps.servicePool.connect();
+    try {
+      await client.query("begin");
+      await client.query("update work_items set priority = $2, updated_at=now() where id = $1", [req.params.id, priority]);
+      await appendEvent(client, {
+        organisation_id: item.organisation_id, project_id: item.project_id, work_item_id: req.params.id,
+        type: "work.reprioritised", payload: { from: item.priority, to: priority },
+      });
+      await client.query("commit");
+      return res.json({ ok: true });
+    } catch (err) {
+      await client.query("rollback").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   }));
 
   api.get("/projects/:id/checkpoints", wrap(async (req, res) => {

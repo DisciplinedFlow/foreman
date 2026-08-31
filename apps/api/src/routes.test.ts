@@ -190,6 +190,53 @@ describe("api routes", () => {
     expect(forbidden.status).toBe(404);
   });
 
+  it("directives: create pause (201 + row + human.directed); message without text → 400; other org → 404", async () => {
+    const ag = (await db.servicePool.query(
+      "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'dir-agent','test') returning id",
+      [a.orgId, a.projectId])).rows[0].id;
+    const res = await fetch(`${url}/api/agents/${ag}/directives`, {
+      method: "POST", headers: { "content-type": "application/json", cookie: cookieA },
+      body: JSON.stringify({ kind: "pause" }),
+    });
+    expect(res.status).toBe(201);
+    const row = await db.servicePool.query("select kind, created_by, delivered_at from directives where agent_id=$1", [ag]);
+    expect(row.rows[0]).toMatchObject({ kind: "pause", created_by: a.userId, delivered_at: null });
+    const e = await db.servicePool.query(
+      "select payload from events where type='human.directed' and payload->>'target'=$1", [ag]);
+    expect(e.rowCount).toBe(1);
+    expect(e.rows[0].payload.directive).toBe("pause");
+
+    const bad = await fetch(`${url}/api/agents/${ag}/directives`, {
+      method: "POST", headers: { "content-type": "application/json", cookie: cookieA },
+      body: JSON.stringify({ kind: "message" }),
+    });
+    expect(bad.status).toBe(400);
+
+    const bAg = (await db.servicePool.query(
+      "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'b-dir','test') returning id",
+      [b.orgId, b.projectId])).rows[0].id;
+    const forbidden = await fetch(`${url}/api/agents/${bAg}/directives`, {
+      method: "POST", headers: { "content-type": "application/json", cookie: cookieA },
+      body: JSON.stringify({ kind: "pause" }),
+    });
+    expect(forbidden.status).toBe(404);
+  });
+
+  it("priority PATCH updates and appends work.reprioritised with from/to", async () => {
+    const wi = (await db.servicePool.query(
+      "insert into work_items (organisation_id, project_id, title, priority) values ($1,$2,'prio',100) returning id",
+      [a.orgId, a.projectId])).rows[0].id;
+    const res = await fetch(`${url}/api/items/${wi}/priority`, {
+      method: "PATCH", headers: { "content-type": "application/json", cookie: cookieA },
+      body: JSON.stringify({ priority: 5 }),
+    });
+    expect(res.status).toBe(200);
+    expect((await db.servicePool.query("select priority from work_items where id=$1", [wi])).rows[0].priority).toBe(5);
+    const e = await db.servicePool.query(
+      "select payload from events where type='work.reprioritised' and work_item_id=$1", [wi]);
+    expect(e.rows[0].payload).toEqual({ from: 100, to: 5 });
+  });
+
   it("briefs are listed newest-first", async () => {
     await db.servicePool.query(
       `insert into briefs (organisation_id, project_id, window_start, window_end, content)

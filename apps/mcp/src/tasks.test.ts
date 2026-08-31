@@ -119,6 +119,24 @@ describe("MCP tasks surface", () => {
     expect(job.rows[0].payload.conclusion).toBe("success");
   });
 
+  it("heartbeat drains undelivered directives oldest-first, exactly once (AVW-5)", async () => {
+    const { call } = await connect();
+    const hello = await call("foreman__agent_announce", { display_name: "directed", platform: "test", capabilities: [] });
+    await db.servicePool.query(
+      `insert into directives (organisation_id, project_id, agent_id, kind, payload, created_at)
+       values ($1,$2,$3,'pause','{}', now() - interval '2 minutes'),
+              ($1,$2,$3,'message','{"message":"wrap up"}', now() - interval '1 minute')`,
+      [orgId, projectId, hello.agent_id]);
+    const beat = await call("foreman__agent_heartbeat", { status: "working" });
+    expect(beat.directives.map((d: any) => d.kind)).toEqual(["pause", "message"]);
+    expect(beat.directives[1].payload).toEqual({ message: "wrap up" });
+    const again = await call("foreman__agent_heartbeat", { status: "working" });
+    expect(again.directives).toEqual([]);
+    const rows = await db.servicePool.query(
+      "select delivered_at from directives where agent_id=$1", [hello.agent_id]);
+    expect(rows.rows.every((r: any) => r.delivered_at !== null)).toBe(true);
+  });
+
   it("heartbeat from a stalled agent flips it to working and appends agent.resumed", async () => {
     const { call } = await connect();
     const hello = await call("foreman__agent_announce", { display_name: "stall-me", platform: "test", capabilities: [] });
