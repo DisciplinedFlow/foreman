@@ -16,8 +16,8 @@ export interface NewEvent {
 export function validateEventPayload(type: string, payload: unknown):
   | { ok: true; payload: Record<string, unknown> }
   | { ok: false; error: string } {
-  const schema = (registry as Record<string, import("zod").ZodTypeAny>)[type];
-  if (!schema) return { ok: false, error: `unknown event type: ${type}` };
+  if (!Object.hasOwn(registry, type)) return { ok: false, error: `unknown event type: ${type}` };
+  const schema = (registry as Record<string, import("zod").ZodTypeAny>)[type]!;
   const r = schema.safeParse(payload);
   return r.success
     ? { ok: true, payload: r.data as Record<string, unknown> }

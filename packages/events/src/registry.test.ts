@@ -26,4 +26,10 @@ describe("event registry", () => {
     // input is permitted only as an explicit opt-in field, present-but-optional in the schema:
     expect(validateEventPayload("tool.invoked", { tool_name: "Bash", tool_use_id: "tu_1", input: { cmd: "ls" } }).ok).toBe(true);
   });
+  it("rejects prototype-chain names as unknown event types", () => {
+    for (const t of ["constructor","toString","hasOwnProperty","__proto__","valueOf"]) {
+      const r = validateEventPayload(t, {});
+      expect(r.ok).toBe(false);
+    }
+  });
 });
