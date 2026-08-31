@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type express from "express";
 import type pg from "pg";
+import { sealPem } from "./crypto.js";
 
 // WL-6 manifest flow (§5.6), living in apps/github because this service owns all
 // GitHub credentials. Deviation 5: PEM goes into github_apps like the seed script;
@@ -31,6 +32,7 @@ export interface SetupOpts {
   githubBase?: string;   // default https://github.com
   apiBase?: string;      // default https://api.github.com
   fetchImpl?: typeof fetch;
+  masterKey?: string;    // when set, App private keys are sealed at rest (hardening)
 }
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
@@ -84,13 +86,14 @@ export function mountSetup(app: express.Express, opts: SetupOpts): void {
       id: number; slug: string; pem: string; webhook_secret: string;
       client_id?: string; client_secret?: string;
     };
+    const pemStored = opts.masterKey !== undefined ? sealPem(body.pem, opts.masterKey) : body.pem;
     await opts.pool.query(
       `insert into github_apps (app_id, organisation_id, slug, private_key_pem, webhook_secret, client_id, client_secret)
        values ($1,$2,$3,$4,$5,$6,$7)
        on conflict (app_id) do update set private_key_pem = excluded.private_key_pem,
          webhook_secret = excluded.webhook_secret, slug = excluded.slug,
          client_id = excluded.client_id, client_secret = excluded.client_secret`,
-      [body.id, orgId, body.slug, body.pem, body.webhook_secret, body.client_id ?? null, body.client_secret ?? null]);
+      [body.id, orgId, body.slug, pemStored, body.webhook_secret, body.client_id ?? null, body.client_secret ?? null]);
 
     const state = typeof req.query.state === "string" ? req.query.state : "";
     res.redirect(302, `${githubBase}/apps/${body.slug}/installations/new?state=${encodeURIComponent(state)}`);

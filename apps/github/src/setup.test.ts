@@ -74,6 +74,34 @@ describe("WL-6 manifest flow", () => {
     expect(res.status).toBe(401);
   });
 
+  it("with a master key the stored pem is sealed and opens back to the original", async () => {
+    const { sealPem, openPem } = await import("./crypto.js");
+    void sealPem;
+    const crypto = await import("node:crypto");
+    const masterKey = crypto.randomBytes(32).toString("hex");
+    const app2 = express();
+    const { mountSetup: mount2 } = await import("./setup.js");
+    mount2(app2, {
+      pool: db.servicePool as pg.Pool, secret: SECRET, masterKey,
+      githubBase: "https://gh.test", apiBase: "https://api.gh.test", publicUrl: "https://foreman.test",
+      fetchImpl: (async () => new Response(JSON.stringify({
+        id: 5252, slug: "sealed-app", pem: "-----REAL PEM-----", webhook_secret: "whs",
+      }), { status: 201 })) as typeof fetch,
+    });
+    const server2 = app2.listen(0);
+    await new Promise((r) => server2.once("listening", r));
+    const url2 = `http://127.0.0.1:${(server2.address() as { port: number }).port}`;
+    // own org so the install-callback "most recent app" lookup elsewhere is untouched
+    const { orgId: sealedOrg } = await seedOrgWithUser(db.servicePool, "sealed-org");
+    const state = signState(sealedOrg, SECRET);
+    await fetch(`${url2}/setup/github/callback?code=c2&state=${encodeURIComponent(state)}`, { redirect: "manual" });
+    await new Promise((r) => server2.close(r));
+
+    const row = await db.servicePool.query("select private_key_pem from github_apps where app_id=5252");
+    expect(row.rows[0].private_key_pem.startsWith("enc:v1:")).toBe(true);
+    expect(openPem(row.rows[0].private_key_pem, masterKey)).toBe("-----REAL PEM-----");
+  });
+
   it("install-callback links the installation to the org's app", async () => {
     const state = signState(orgId, SECRET);
     const res = await fetch(`${url}/setup/github/install-callback?installation_id=9977&state=${encodeURIComponent(state)}`);

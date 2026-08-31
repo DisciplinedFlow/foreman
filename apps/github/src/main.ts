@@ -7,6 +7,7 @@ import { claimSyncJob, completeSyncJob } from "./jobs.js";
 import { handleSyncJob, type HandlerContext } from "./handlers/index.js";
 import { GithubBackbone } from "./backbone.js";
 import { mountSetup } from "./setup.js";
+import { openPem, keyFromEnv } from "./crypto.js";
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL
@@ -29,7 +30,7 @@ const tokens = new InstallationTokenSource({
   getApp: async (appId) => {
     const r = await pool.query("select private_key_pem from github_apps where app_id = $1", [appId]);
     if (r.rowCount === 0) throw new Error(`unknown github app ${appId}`);
-    return { privateKeyPem: r.rows[0].private_key_pem };
+    return { privateKeyPem: openPem(r.rows[0].private_key_pem, keyFromEnv()) };
   },
 });
 const echo = new EchoCache(kv);
@@ -46,6 +47,7 @@ mountSetup(receiver, {
   pool,
   secret: process.env.FOREMAN_SESSION_SECRET ?? "dev-only-secret",
   publicUrl: process.env.FOREMAN_PUBLIC_URL ?? `http://localhost:${port}`,
+  ...(keyFromEnv() !== undefined ? { masterKey: keyFromEnv()! } : {}),
 });
 receiver.listen(port, () => {
   console.log(`foreman-github webhook receiver on :${port}`);
