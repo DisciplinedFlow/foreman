@@ -43,6 +43,7 @@ export const registry = {
 
   "repo.endpoint_discovered": z.object({ method: str, path: str, framework: z.string().optional() }).strict(),
   "repo.endpoint_state_changed": z.object({ method: str, path: str, from: str, to: str }).strict(),
+  "lifecycle.scanned": z.object({ gh_repo: str, found: z.number().int(), changed: z.number().int() }).strict(),
   "deploy.succeeded": z.object({ environment: z.string().optional(), sha: z.string().optional() }).strict(),
   "deploy.failed": z.object({ environment: z.string().optional(), sha: z.string().optional(), reason: z.string().optional() }).strict(),
 
