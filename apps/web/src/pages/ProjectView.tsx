@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, patchSchedule, useProjectStream } from "../api.js";
 import { AgentTable, type AgentRow } from "../agents/AgentTable.js";
+import { DecisionCards, type CheckpointRow } from "../checkpoints/DecisionCards.js";
+import { CommGraph, type CommNode, type CommEdge } from "../graph/CommGraph.js";
 import { Gantt } from "../gantt/Gantt.js";
 import { mergeSchedule, type GanttItem } from "../gantt/layout.js";
 
@@ -18,12 +20,14 @@ export function ProjectView() {
   const { id } = useParams();
   const projectId = id!;
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"gantt" | "agents">("gantt");
+  const [tab, setTab] = useState<"gantt" | "agents" | "graph">("gantt");
   const [name, setName] = useState("");
   const [items, setItems] = useState<ItemRow[]>([]);
   const [deps, setDeps] = useState<Dep[]>([]);
   const [schedule, setSchedule] = useState<ScheduleRow[]>([]);
   const [agents, setAgents] = useState<AgentRow[]>([]);
+  const [checkpoints, setCheckpoints] = useState<CheckpointRow[]>([]);
+  const [graph, setGraph] = useState<{ nodes: CommNode[]; edges: CommEdge[] } | null>(null);
 
   const load = useCallback(async (scopes: string[]) => {
     try {
@@ -39,6 +43,12 @@ export function ProjectView() {
       if (scopes.includes("agents")) {
         const body = await api<{ agents: AgentRow[] }>(`/api/projects/${projectId}/agents`);
         setAgents(body.agents);
+        const g = await api<{ nodes: CommNode[]; edges: CommEdge[] }>(`/api/projects/${projectId}/comm-graph`);
+        setGraph(g);
+      }
+      if (scopes.includes("checkpoints")) {
+        const body = await api<{ checkpoints: CheckpointRow[] }>(`/api/projects/${projectId}/checkpoints`);
+        setCheckpoints(body.checkpoints);
       }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) navigate("/login");
@@ -46,7 +56,7 @@ export function ProjectView() {
   }, [projectId, navigate]);
 
   useEffect(() => {
-    void load(["items", "schedule", "agents"]);
+    void load(["items", "schedule", "agents", "checkpoints"]);
     api<{ project: { name: string } }>(`/api/projects/${projectId}`)
       .then((b) => setName(b.project.name))
       .catch(() => {});
@@ -68,16 +78,27 @@ export function ProjectView() {
     patchSchedule(itemId, change).catch(() => { void load(["items", "schedule"]); });
   };
 
+  const onCheckpointAnswer = (id: string, answer: string) => {
+    api(`/api/checkpoints/${id}/answer`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ answer }),
+    }).finally(() => { void load(["checkpoints", "agents"]); });
+  };
+
   return (
     <main style={{ padding: 16 }}>
       <h1>{name || "Project"}</h1>
+      <DecisionCards checkpoints={checkpoints} onAnswer={onCheckpointAnswer} />
       <nav style={{ marginBottom: 12 }}>
         <button onClick={() => setTab("gantt")} disabled={tab === "gantt"}>Gantt</button>{" "}
-        <button onClick={() => setTab("agents")} disabled={tab === "agents"}>Agents</button>
+        <button onClick={() => setTab("agents")} disabled={tab === "agents"}>Agents</button>{" "}
+        <button onClick={() => setTab("graph")} disabled={tab === "graph"}>Graph</button>
       </nav>
-      {tab === "gantt"
-        ? <Gantt items={ganttItems} deps={deps} onReschedule={onReschedule} />
-        : <AgentTable agents={agents} />}
+      {tab === "gantt" && <Gantt items={ganttItems} deps={deps} onReschedule={onReschedule} />}
+      {tab === "agents" && <AgentTable agents={agents} />}
+      {tab === "graph" && (graph !== null
+        ? <CommGraph nodes={graph.nodes} edges={graph.edges} />
+        : <p>No communication data yet.</p>)}
     </main>
   );
 }
