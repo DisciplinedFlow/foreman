@@ -45,6 +45,9 @@ importers:
       '@foreman/github-client':
         specifier: workspace:*
         version: link:../../packages/github-client
+      '@modelcontextprotocol/sdk':
+        specifier: 1.30.0
+        version: 1.30.0(zod@3.25.76)
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.25
@@ -54,6 +57,9 @@ importers:
       foreman-github:
         specifier: workspace:*
         version: link:../github
+      foreman-mcp:
+        specifier: workspace:*
+        version: link:../mcp
       tsx:
         specifier: ^4.19.0
         version: 4.23.13

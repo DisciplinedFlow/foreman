@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "main": "./src/main.ts",
-  "exports": { ".": "./src/main.ts", "./lib": "./src/lib.ts" },
+  "exports": {
+    ".": "./src/main.ts",
+    "./lib": "./src/lib.ts"
+  },
   "scripts": {
     "start": "tsx src/main.ts",
     "dev": "tsx src/main.ts",
@@ -13,20 +16,22 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "pg": "^8.13.0",
-    "zod": "^3.23.0",
     "@foreman/db": "workspace:*",
     "@foreman/events": "workspace:*",
-    "foreman-gen": "workspace:*"
+    "express": "^4.21.2",
+    "foreman-gen": "workspace:*",
+    "pg": "^8.13.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
-    "typescript": "^5.6.0",
-    "tsx": "^4.19.0",
-    "vitest": "^3.0.0",
-    "@types/pg": "^8.11.0",
+    "@foreman/github-client": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@types/express": "^4.17.21",
+    "@types/pg": "^8.11.0",
     "foreman-github": "workspace:*",
-    "@foreman/github-client": "workspace:*"
+    "foreman-mcp": "workspace:*",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
   }
 }
