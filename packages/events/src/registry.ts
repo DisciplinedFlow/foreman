@@ -24,6 +24,7 @@ export const registry = {
   "work.cancelled": z.object({ by: str }).strict(),
   "work.lease_expired": z.object({ agent_id: uuid }).strict(),
   "work.reprioritised": z.object({ from: z.number().int(), to: z.number().int() }).strict(),
+  "work.reassigned": z.object({ by: str, reason: z.string().optional() }).strict(),
   "work.rescheduled": z.object({ start_at: z.string().optional(), target_at: z.string().optional(), iteration_id: z.string().optional() }).strict(),
 
   "comm.message_sent": z.object({ from_agent_id: uuid, to_agent_id: uuid.optional(), broadcast_scope: z.enum(["project","organisation"]).optional(), message: str }).strict(),
