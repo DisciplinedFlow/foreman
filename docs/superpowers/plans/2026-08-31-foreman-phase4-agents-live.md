@@ -1,5 +1,13 @@
 # Foreman Phase 4 — Tasks, Telemetry, Check Runs, Briefs Implementation Plan
 
+> **EXECUTED 31-08-2026** — all 11 tasks landed on main (commits a24da08..346ac02 + one CRLF test
+> fix), 161 tests green including the loop-closure e2e. Deviations from plan text: BRF-7 stored-row
+> comparison is structural (jsonb normalizes key order; byte-identity holds assemble-vs-assemble);
+> root vitest config needed dir-anchored project paths; `foreman-mcp/lib`, `foreman-api/lib`,
+> `foreman-scheduler/lib` export maps added for the cross-app e2e; scheduler's brief cron imports
+> `foreman-gen/lib` directly (no sync job). Windows note: never patch package.json with
+> PowerShell `-Encoding utf8` — the BOM breaks JSON parsers.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the loop around live agents — MCP tasks surface (DB-backed `tasks/*`), passive telemetry via a Claude Code hooks plugin + `apps/ingest`, stall detection (AVW-3), check runs as the control surface (GHA-5) with retry/reassign/abort, reproducible briefs (BRF-7), the checkpoint decision-card loop in the UI, and the communication graph (AVW-2).
