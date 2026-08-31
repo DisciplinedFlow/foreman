@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "main": "./src/main.ts",
+  "exports": { ".": "./src/main.ts", "./lib": "./src/lib.ts" },
   "scripts": {
     "start": "tsx src/main.ts",
     "dev": "tsx src/main.ts",
