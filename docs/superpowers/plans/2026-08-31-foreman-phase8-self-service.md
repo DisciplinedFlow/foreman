@@ -1,5 +1,12 @@
 # Foreman Phase 8 — Self-Service Settings, Items & Tokens, Metrics, Export Implementation Plan
 
+> **EXECUTED 31-08-2026** — all 7 tasks landed on main (commits 55ed258..038a27e), 268 tests
+> green. The full self-service e2e passes: settings PATCH links GitHub → new-item routes through
+> the create_item worker → an api-minted token drives a real MCP agent to completion → metrics
+> count the supervised throughput → the export carries the whole story. The quickstart's three
+> manual-SQL callouts are deleted (replaced by Settings / + New item / token mint UI). Deviation:
+> apps/api gained devDeps on foreman-mcp + the MCP SDK for the e2e.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close every manual-SQL gap the quickstart admits to — project settings (repos/board/thresholds/brief config), work-item creation, and agent-token mint/revoke from the UI — plus a deterministic PRD §1.7 metrics read and the event-log export endpoint + posture doc the Vibe Kanban memo argues for.
