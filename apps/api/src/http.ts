@@ -1,6 +1,7 @@
 import express from "express";
 import type pg from "pg";
-import { COOKIE_NAME, signSession, verifySession } from "./auth.js";
+import { signSession, verifySession, sessionCookieName } from "./auth.js";
+import { CSRF_COOKIE, issueCsrf, csrfMiddleware } from "./csrf.js";
 import { mountRoutes } from "./routes.js";
 import { mountStream, type EventHub } from "./stream.js";
 
@@ -38,14 +39,19 @@ export function createApp(deps: ApiDeps): express.Express {
       const user = await deps.servicePool.query("select id from users where email = $1", [email]);
       if (user.rowCount === 0) return res.status(404).json({ error: "unknown user" });
       const userId: string = user.rows[0].id;
-      res.setHeader("set-cookie",
-        `${COOKIE_NAME}=${signSession(userId, deps.secret)}; HttpOnly; SameSite=Lax; Path=/`);
-      return res.json({ user_id: userId });
+      const secure = deps.devAuth ? "" : "; Secure";
+      const csrf = issueCsrf();
+      res.setHeader("set-cookie", [
+        `${sessionCookieName(deps.devAuth)}=${signSession(userId, deps.secret)}; HttpOnly; SameSite=Lax; Path=/${secure}`,
+        // double-submit half: readable by the page, echoed back as x-csrf-token
+        `${CSRF_COOKIE}=${csrf}; SameSite=Lax; Path=/${secure}`,
+      ]);
+      return res.json({ user_id: userId, csrf_token: csrf });
     });
   }
 
   const requireUser: express.RequestHandler = (req, res, next) => {
-    const userId = verifySession(parseCookie(req.headers.cookie, COOKIE_NAME), deps.secret);
+    const userId = verifySession(parseCookie(req.headers.cookie, sessionCookieName(deps.devAuth)), deps.secret);
     if (userId === null) return res.status(401).json({ error: "unauthenticated" });
     (req as AuthedRequest).userId = userId;
     return next();
@@ -53,6 +59,7 @@ export function createApp(deps: ApiDeps): express.Express {
 
   const api = express.Router();
   api.use(requireUser);
+  api.use(csrfMiddleware());
   mountRoutes(api, deps);
   mountStream(api, deps);
   app.use("/api", api);

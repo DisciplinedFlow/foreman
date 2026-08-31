@@ -16,6 +16,7 @@ let appPool: pg.Pool;
 let hub: EventHub;
 let url: string;
 let cookie: string;
+let csrf: string;
 let orgId: string;
 let projectId: string;
 let itemId: string;
@@ -70,7 +71,8 @@ beforeAll(async () => {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ email: "e2e@test.local" }),
   });
-  cookie = (login.headers.get("set-cookie") ?? "").split(";")[0]!;
+  cookie = login.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  csrf = (await login.json()).csrf_token;
 });
 afterAll(async () => {
   for (const c of closers.reverse()) await c();
@@ -114,7 +116,7 @@ describe("full-stack round trip", () => {
 
     // The "drag": PATCH → 202 → one queued sync job.
     const patch = await fetch(`${url}/api/items/${itemId}/schedule`, {
-      method: "PATCH", headers: { "content-type": "application/json", cookie },
+      method: "PATCH", headers: { "content-type": "application/json", cookie, "x-csrf-token": csrf },
       body: JSON.stringify({ target_at: "2026-09-20" }),
     });
     expect(patch.status).toBe(202);

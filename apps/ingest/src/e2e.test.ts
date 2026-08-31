@@ -100,11 +100,12 @@ describe("loop closure: telemetry → stall → resume → claim task → checkp
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: "loopclose@test.local" }),
     });
-    const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const cookie = login.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+    const csrf = (await login.json()).csrf_token;
     const open = await (await fetch(`${apiUrl}/api/projects/${projectId}/checkpoints`, { headers: { cookie } })).json();
     expect(open.checkpoints.map((c: any) => c.id)).toContain(cp.checkpoint_id);
     const answered = await fetch(`${apiUrl}/api/checkpoints/${cp.checkpoint_id}/answer`, {
-      method: "POST", headers: { "content-type": "application/json", cookie },
+      method: "POST", headers: { "content-type": "application/json", cookie, "x-csrf-token": csrf },
       body: JSON.stringify({ answer: "squash" }),
     });
     expect(answered.status).toBe(200);

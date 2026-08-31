@@ -18,6 +18,7 @@ let orgId: string;
 let projectId: string;
 let apiUrl: string;
 let cookie: string;
+let csrf: string;
 let mcpCall: (name: string, args: Record<string, unknown>) => Promise<any>;
 let mcpClient: Client;
 const webhookHits: any[] = [];
@@ -51,7 +52,8 @@ beforeAll(async () => {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ email: "phase5@test.local" }),
   });
-  cookie = (login.headers.get("set-cookie") ?? "").split(";")[0]!;
+  cookie = login.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  csrf = (await login.json()).csrf_token;
 
   const mcpUrl = await listen(createMcpApp(db.servicePool as pg.Pool));
   const { token } = await createAgentToken(db.servicePool, { organisationId: orgId, projectId });
@@ -72,7 +74,7 @@ describe("phase 5 loop: direct the fleet, understand the project, briefs arrive"
     const hello = await mcpCall("foreman__agent_announce",
       { display_name: "phase5-agent", platform: "test", capabilities: [] });
     const res = await fetch(`${apiUrl}/api/agents/${hello.agent_id}/directives`, {
-      method: "POST", headers: { "content-type": "application/json", cookie },
+      method: "POST", headers: { "content-type": "application/json", cookie, "x-csrf-token": csrf },
       body: JSON.stringify({ kind: "pause" }),
     });
     expect(res.status).toBe(201);
@@ -100,7 +102,7 @@ describe("phase 5 loop: direct the fleet, understand the project, briefs arrive"
 
     // human edit + pin via the api, then churn + regenerate twice → intact
     const put = await fetch(`${apiUrl}/api/projects/${projectId}/overview/shipped`, {
-      method: "PUT", headers: { "content-type": "application/json", cookie },
+      method: "PUT", headers: { "content-type": "application/json", cookie, "x-csrf-token": csrf },
       body: JSON.stringify({ content: "OUR VERSION", pinned: true }),
     });
     expect(put.status).toBe(200);

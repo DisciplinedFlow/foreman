@@ -11,14 +11,20 @@ let url: string;
 let close: () => Promise<unknown>;
 let cookieA: string;
 
+let csrfA: string;
+
 async function login(email: string): Promise<string> {
   const res = await fetch(`${url}/auth/dev-login`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ email }),
   });
   expect(res.status).toBe(200);
-  return (res.headers.get("set-cookie") ?? "").split(";")[0]!;
+  csrfA = (await res.json()).csrf_token;
+  return res.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
 }
+
+// WL-5: every mutation needs the double-submit pair.
+const mut = () => ({ cookie: cookieA, "x-csrf-token": csrfA });
 
 const get = (path: string, cookie?: string) =>
   fetch(`${url}${path}`, { headers: cookie ? { cookie } : {} });
@@ -107,7 +113,7 @@ describe("api routes", () => {
     const wi = (await db.servicePool.query(
       "select id from work_items where project_id=$1 limit 1", [a.projectId])).rows[0].id;
     const res = await fetch(`${url}/api/items/${wi}/schedule`, {
-      method: "PATCH", headers: { "content-type": "application/json", cookie: cookieA },
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
       body: JSON.stringify({ target_at: "2026-09-20" }),
     });
     expect(res.status).toBe(202);
@@ -124,7 +130,7 @@ describe("api routes", () => {
       `insert into work_items (organisation_id, project_id, title) values ($1,$2,'b item') returning id`,
       [b.orgId, b.projectId])).rows[0].id;
     const res = await fetch(`${url}/api/items/${wi}/schedule`, {
-      method: "PATCH", headers: { "content-type": "application/json", cookie: cookieA },
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
       body: JSON.stringify({ target_at: "2026-09-20" }),
     });
     expect(res.status).toBe(404);
@@ -137,7 +143,7 @@ describe("api routes", () => {
     const wi = (await db.servicePool.query(
       "select id from work_items where project_id=$1 limit 1", [a.projectId])).rows[0].id;
     const res = await fetch(`${url}/api/items/${wi}/schedule`, {
-      method: "PATCH", headers: { "content-type": "application/json", cookie: cookieA },
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
       body: JSON.stringify({ target_at: "soon" }),
     });
     expect(res.status).toBe(400);
@@ -159,7 +165,7 @@ describe("api routes", () => {
     expect(list.checkpoints.find((c: any) => c.id === cp).work_item_title).toBe("cp target");
 
     const answer = await fetch(`${url}/api/checkpoints/${cp}/answer`, {
-      method: "POST", headers: { "content-type": "application/json", cookie: cookieA },
+      method: "POST", headers: { "content-type": "application/json", ...mut() },
       body: JSON.stringify({ answer: "x" }),
     });
     expect(answer.status).toBe(200);
@@ -169,7 +175,7 @@ describe("api routes", () => {
       "select 1 from events where type='human.decided' and payload->>'checkpoint_id'=$1", [cp])).rowCount).toBe(1);
 
     const again = await fetch(`${url}/api/checkpoints/${cp}/answer`, {
-      method: "POST", headers: { "content-type": "application/json", cookie: cookieA },
+      method: "POST", headers: { "content-type": "application/json", ...mut() },
       body: JSON.stringify({ answer: "y" }),
     });
     expect(again.status).toBe(409);
@@ -184,7 +190,7 @@ describe("api routes", () => {
       `insert into checkpoints (organisation_id, project_id, work_item_id, agent_id, question)
        values ($1,$2,$3,$4,'b question') returning id`, [b.orgId, b.projectId, bWi, bAgent])).rows[0].id;
     const forbidden = await fetch(`${url}/api/checkpoints/${bCp}/answer`, {
-      method: "POST", headers: { "content-type": "application/json", cookie: cookieA },
+      method: "POST", headers: { "content-type": "application/json", ...mut() },
       body: JSON.stringify({ answer: "nope" }),
     });
     expect(forbidden.status).toBe(404);
@@ -195,7 +201,7 @@ describe("api routes", () => {
       "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'dir-agent','test') returning id",
       [a.orgId, a.projectId])).rows[0].id;
     const res = await fetch(`${url}/api/agents/${ag}/directives`, {
-      method: "POST", headers: { "content-type": "application/json", cookie: cookieA },
+      method: "POST", headers: { "content-type": "application/json", ...mut() },
       body: JSON.stringify({ kind: "pause" }),
     });
     expect(res.status).toBe(201);
@@ -207,7 +213,7 @@ describe("api routes", () => {
     expect(e.rows[0].payload.directive).toBe("pause");
 
     const bad = await fetch(`${url}/api/agents/${ag}/directives`, {
-      method: "POST", headers: { "content-type": "application/json", cookie: cookieA },
+      method: "POST", headers: { "content-type": "application/json", ...mut() },
       body: JSON.stringify({ kind: "message" }),
     });
     expect(bad.status).toBe(400);
@@ -216,7 +222,7 @@ describe("api routes", () => {
       "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'b-dir','test') returning id",
       [b.orgId, b.projectId])).rows[0].id;
     const forbidden = await fetch(`${url}/api/agents/${bAg}/directives`, {
-      method: "POST", headers: { "content-type": "application/json", cookie: cookieA },
+      method: "POST", headers: { "content-type": "application/json", ...mut() },
       body: JSON.stringify({ kind: "pause" }),
     });
     expect(forbidden.status).toBe(404);
@@ -227,7 +233,7 @@ describe("api routes", () => {
       "insert into work_items (organisation_id, project_id, title, priority) values ($1,$2,'prio',100) returning id",
       [a.orgId, a.projectId])).rows[0].id;
     const res = await fetch(`${url}/api/items/${wi}/priority`, {
-      method: "PATCH", headers: { "content-type": "application/json", cookie: cookieA },
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
       body: JSON.stringify({ priority: 5 }),
     });
     expect(res.status).toBe(200);
@@ -252,7 +258,7 @@ describe("api routes", () => {
       "insert into work_items (organisation_id, project_id, title, status) values ($1,$2,'ov item','in_progress')",
       [a.orgId, a.projectId]);
     const regen = await fetch(`${url}/api/projects/${a.projectId}/overview/regenerate`, {
-      method: "POST", headers: { cookie: cookieA } });
+      method: "POST", headers: mut() });
     expect(regen.status).toBe(200);
     const { regenerated } = await regen.json();
     expect(regenerated).toContain("in_flight");
@@ -263,7 +269,7 @@ describe("api routes", () => {
     expect(inFlight.sources.length).toBeGreaterThan(0);
 
     const put = await fetch(`${url}/api/projects/${a.projectId}/overview/in_flight`, {
-      method: "PUT", headers: { "content-type": "application/json", cookie: cookieA },
+      method: "PUT", headers: { "content-type": "application/json", ...mut() },
       body: JSON.stringify({ content: "our edit", pinned: true }),
     });
     expect(put.status).toBe(200);
@@ -274,7 +280,7 @@ describe("api routes", () => {
       "select 1 from events where type='human.overrode' and payload->>'subject'='overview:in_flight'")).rowCount).toBe(1);
 
     const bad = await fetch(`${url}/api/projects/${a.projectId}/overview/nonsense`, {
-      method: "PUT", headers: { "content-type": "application/json", cookie: cookieA },
+      method: "PUT", headers: { "content-type": "application/json", ...mut() },
       body: JSON.stringify({ pinned: true }),
     });
     expect(bad.status).toBe(400);
