@@ -297,6 +297,23 @@ describe("api routes", () => {
     expect(revs.revisions[0].caused_by).toBe("human");
   });
 
+  it("export streams every project event as NDJSON; cross-org 404s (memo lesson 4)", async () => {
+    const expected = await db.servicePool.query(
+      "select count(*)::int as n from events where project_id=$1", [a.projectId]);
+    const res = await get(`/api/projects/${a.projectId}/export`, cookieA);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/x-ndjson");
+    expect(res.headers.get("content-disposition")).toContain("attachment");
+    const lines = (await res.text()).trim().split("\n").filter((l) => l !== "");
+    expect(lines.length).toBe(expected.rows[0].n);
+    const first = JSON.parse(lines[0]!);
+    const last = JSON.parse(lines[lines.length - 1]!);
+    expect(typeof first.id).toBeDefined();
+    expect(first.type).toBeDefined();
+    expect(Number(last.id)).toBeGreaterThanOrEqual(Number(first.id));
+    expect((await get(`/api/projects/${b.projectId}/export`, cookieA)).status).toBe(404);
+  });
+
   it("item POST: local project → 201 + work.created; connected project → 202 + create_item job", async () => {
     const local = (await db.servicePool.query(
       "insert into projects (organisation_id, name) values ($1,'local-p') returning id", [a.orgId])).rows[0].id;

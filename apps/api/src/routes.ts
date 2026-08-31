@@ -479,6 +479,30 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
 
   // PRD §1.7 — deterministic reads over the event log; `now` is caller-suppliable
   // so the numbers are reproducible (BRF-7 spirit).
+  // Memo lesson 4: your events, your Postgres. The whole project log, id-ordered.
+  api.get("/projects/:id/export", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const visible = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query("select 1 from projects where id = $1", [req.params.id])).rowCount !== 0);
+    if (!visible) return res.status(404).json({ error: "not found" });
+    res.writeHead(200, {
+      "content-type": "application/x-ndjson",
+      "content-disposition": `attachment; filename=foreman-events-${req.params.id}.ndjson`,
+    });
+    await withUser(deps.appPool, userId, async (tx) => {
+      let cursor = "0";
+      for (;;) {
+        const batch = await tx.query(
+          "select * from events where project_id = $1 and id > $2 order by id limit 500",
+          [req.params.id, cursor]);
+        if (batch.rowCount === 0) break;
+        for (const row of batch.rows) res.write(JSON.stringify(row) + "\n");
+        cursor = String(batch.rows[batch.rows.length - 1].id);
+      }
+    });
+    res.end();
+  }));
+
   api.get("/projects/:id/metrics", wrap(async (req, res) => {
     const { userId } = req as AuthedRequest;
     const nowParam = typeof req.query.now === "string" ? Date.parse(req.query.now) : NaN;
