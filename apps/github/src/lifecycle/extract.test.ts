@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   extractOpenApi, extractExpress, extractFastApi, extractNextRoutes, detectTests,
+  extractDjango, extractRails, extractSpring,
 } from "./extract.js";
 
 describe("extractOpenApi (LFC-1)", () => {
@@ -101,6 +102,82 @@ describe("extractNextRoutes", () => {
     expect(keys).toContain("GET /api/users/:id");
     expect(keys).toContain("POST /api/users/:id");
     expect(keys.every((k) => !k.includes("helper"))).toBe(true);
+  });
+});
+
+describe("extractDjango (deviation: URLconf has no verb → GET)", () => {
+  const src = `
+from django.urls import path, re_path
+
+urlpatterns = [
+    path("users/", views.user_list),
+    path("users/<int:pk>/", views.user_detail),
+    re_path(r"^legacy/$", views.legacy),
+    # path("commented/", views.nope),
+]
+`;
+  it("finds urlpatterns entries with converters mapped to params", () => {
+    const found = extractDjango(src);
+    const keys = found.map((f) => `${f.method} ${f.path}`);
+    expect(keys).toContain("GET /users/");
+    expect(keys).toContain("GET /users/:pk/");
+    expect(keys).toContain("GET /legacy/");
+    expect(keys.some((k) => k.includes("commented"))).toBe(false);
+    expect(found.every((f) => f.framework === "django")).toBe(true);
+  });
+});
+
+describe("extractRails", () => {
+  const src = `
+Rails.application.routes.draw do
+  get "health", to: "health#show"
+  post 'webhooks/github', to: "webhooks#github"
+  resources :articles
+  # get "commented", to: "x#y"
+end
+`;
+  it("finds verb routes and expands resources to the 5 API routes", () => {
+    const found = extractRails(src);
+    const keys = found.map((f) => `${f.method} ${f.path}`).sort();
+    expect(keys).toContain("GET /health");
+    expect(keys).toContain("POST /webhooks/github");
+    for (const k of ["GET /articles", "POST /articles", "GET /articles/:id", "PATCH /articles/:id", "DELETE /articles/:id"]) {
+      expect(keys).toContain(k);
+    }
+    expect(keys.some((k) => k.includes("commented"))).toBe(false);
+    expect(found.length).toBe(7);
+  });
+});
+
+describe("extractSpring", () => {
+  const src = `
+@RestController
+@RequestMapping("/api/orders")
+public class OrderController {
+    @GetMapping
+    public List<Order> list() { return service.all(); }
+
+    @GetMapping("/{id}")
+    public Order one(@PathVariable Long id) { return service.get(id); }
+
+    @PostMapping("/{id}/cancel")
+    public void cancel(@PathVariable Long id) { service.cancel(id); }
+
+    @RequestMapping(method = RequestMethod.DELETE, value = "/{id}")
+    public void remove(@PathVariable Long id) { service.remove(id); }
+
+    // @GetMapping("/commented")
+}
+`;
+  it("joins the class prefix with method mappings, empty path = prefix itself", () => {
+    const found = extractSpring(src);
+    const keys = found.map((f) => `${f.method} ${f.path}`).sort();
+    expect(keys).toEqual([
+      "DELETE /api/orders/{id}",
+      "GET /api/orders",
+      "GET /api/orders/{id}",
+      "POST /api/orders/{id}/cancel",
+    ]);
   });
 });
 

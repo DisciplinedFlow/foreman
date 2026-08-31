@@ -126,6 +126,84 @@ export function extractNextRoutes(filePath: string, content: string): Found[] {
   return out;
 }
 
+// Django URLconf carries no HTTP verb (Phase 7 deviation: emit GET as the
+// documented convention); <type:name> converters become :name params.
+const DJANGO_RE = /\b(?:path|re_path|url)\(\s*r?['"]([^'"]*)['"]/;
+
+export function extractDjango(content: string): Found[] {
+  const out: Found[] = [];
+  let inPatterns = false;
+  for (const line of content.split("\n")) {
+    if (isCommentLine(line)) continue;
+    if (/urlpatterns\s*[=+]/.test(line)) inPatterns = true;
+    if (!inPatterns) continue;
+    const m = DJANGO_RE.exec(line);
+    if (m === null) continue;
+    let p = m[1]!.replace(/^\^/, "").replace(/\$$/, "");
+    p = p.replace(/<\w+:(\w+)>/g, ":$1").replace(/<(\w+)>/g, ":$1");
+    const path = p.startsWith("/") ? p : `/${p}`;
+    if (!validPath(path)) continue;
+    out.push({ method: "GET", path, source: "impl", framework: "django", trivial: false });
+    if (/\]/.test(line) && !line.includes("[")) inPatterns = false;
+  }
+  return out;
+}
+
+// Rails routes DSL (Phase 7 deviation 3): verb lines + `resources` expanded to
+// the five API routes (new/edit have no API meaning).
+const RAILS_VERB_RE = /^\s*(get|post|put|patch|delete)\s+['"]([^'"]+)['"]/;
+const RAILS_RESOURCES_RE = /^\s*resources\s+:(\w+)/;
+
+export function extractRails(content: string): Found[] {
+  const out: Found[] = [];
+  const push = (method: string, path: string) => {
+    if (validPath(path)) out.push({ method, path, source: "impl", framework: "rails", trivial: false });
+  };
+  for (const line of content.split("\n")) {
+    if (isCommentLine(line)) continue;
+    const verb = RAILS_VERB_RE.exec(line);
+    if (verb !== null) {
+      const p = verb[2]!;
+      push(verb[1]!.toUpperCase(), p.startsWith("/") ? p : `/${p}`);
+      continue;
+    }
+    const res = RAILS_RESOURCES_RE.exec(line);
+    if (res !== null) {
+      const base = `/${res[1]}`;
+      push("GET", base); push("POST", base);
+      push("GET", `${base}/:id`); push("PATCH", `${base}/:id`); push("DELETE", `${base}/:id`);
+    }
+  }
+  return out;
+}
+
+// Spring annotations (Phase 7 deviation 4): class-level @RequestMapping prefix
+// + per-method mappings; {id} path variables kept verbatim.
+const SPRING_CLASS_RE = /@RequestMapping\(\s*["']([^"']+)["']\s*\)/;
+const SPRING_METHOD_RE = /@(Get|Post|Put|Patch|Delete)Mapping(?:\(\s*(?:value\s*=\s*)?["']([^"']*)["']\s*\))?/;
+const SPRING_REQMAP_RE = /@RequestMapping\(\s*method\s*=\s*RequestMethod\.(GET|POST|PUT|PATCH|DELETE)\s*,\s*value\s*=\s*["']([^"']*)["']\s*\)/;
+
+export function extractSpring(content: string): Found[] {
+  const out: Found[] = [];
+  const lines = content.split("\n").filter((l) => !isCommentLine(l));
+  let prefix = "";
+  for (const line of lines) {
+    const cls = SPRING_CLASS_RE.exec(line);
+    if (cls !== null && !line.includes("method")) { prefix = cls[1]!.replace(/\/$/, ""); continue; }
+    let method: string | null = null;
+    let sub: string = "";
+    const mm = SPRING_METHOD_RE.exec(line);
+    if (mm !== null) { method = mm[1]!.toUpperCase(); sub = mm[2] ?? ""; }
+    const rm = SPRING_REQMAP_RE.exec(line);
+    if (rm !== null) { method = rm[1]!; sub = rm[2] ?? ""; }
+    if (method === null) continue;
+    const joined = `${prefix}${sub === "" ? "" : sub.startsWith("/") ? sub : `/${sub}`}` || "/";
+    if (!validPath(joined)) continue;
+    out.push({ method, path: joined, source: "impl", framework: "spring", trivial: false });
+  }
+  return out;
+}
+
 export function detectTests(content: string, endpoints: Array<Pick<Found, "method" | "path">>): string[] {
   const hit = new Set<string>();
   for (const e of endpoints) {

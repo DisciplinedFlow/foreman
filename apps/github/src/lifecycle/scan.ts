@@ -1,6 +1,9 @@
 import { appendEvent, type Queryable } from "@foreman/db";
 import type { GithubClientLike } from "../sync/field-map.js";
-import { extractOpenApi, extractExpress, extractFastApi, extractNextRoutes, detectTests, type Found } from "./extract.js";
+import {
+  extractOpenApi, extractExpress, extractFastApi, extractNextRoutes, detectTests,
+  extractDjango, extractRails, extractSpring, type Found,
+} from "./extract.js";
 
 export interface ScanProject {
   id: string;
@@ -11,7 +14,7 @@ export interface ScanProject {
 
 const SPEC_FILE = /(^|\/)(openapi|swagger|asyncapi)\.(json|ya?ml)$/i;
 const TEST_FILE = /(\.test\.|_test\.py$|(^|\/)tests?\/)/;
-const CODE_FILE = /\.(ts|js|py)$/;
+const CODE_FILE = /(\.(ts|js|py|java)|(^|\/)routes\.rb)$/;
 const SKIP = /(^|\/)(node_modules|dist|build|\.git)\//;
 const MAX_CODE_FILES = 50;
 const MAX_TEST_FILES = 20;
@@ -84,7 +87,9 @@ export async function scanLifecycle(
     for (const p of codeFiles) {
       const c = await fetchContent(p);
       if (c === null) continue;
-      const found = p.endsWith(".py") ? extractFastApi(c)
+      const found = p.endsWith(".py") ? [...extractFastApi(c), ...extractDjango(c)]
+        : p.endsWith("routes.rb") ? extractRails(c)
+        : p.endsWith(".java") ? extractSpring(c)
         : [...extractNextRoutes(p, c), ...extractExpress(c)];
       for (const f of found) add(f, p);
     }

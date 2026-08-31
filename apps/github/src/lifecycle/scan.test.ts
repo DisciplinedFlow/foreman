@@ -65,6 +65,24 @@ beforeAll(async () => {
 afterAll(async () => { await db.teardown(); });
 
 describe("scanLifecycle (LFC-1/2/3)", () => {
+  it("routes rails and java files to their extractors", async () => {
+    const files = {
+      "config/routes.rb": `Rails.application.routes.draw do\n  get "ping", to: "x#y"\nend`,
+      "src/main/java/OrderController.java":
+        `@RequestMapping("/api/v1")\npublic class C {\n  @PostMapping("/orders")\n  public void create() { svc.go(); }\n}`,
+    };
+    const { orgId: o2, projectId: p2 } = await seedOrgWithUser(db.servicePool, "lc-mixed");
+    await seedGithubApp(db.servicePool, o2, 2, 888);
+    await db.servicePool.query(
+      "update projects set gh_repos=array['m/x'], gh_installation_id=888 where id=$1", [p2]);
+    const proj = (await db.servicePool.query("select * from projects where id=$1", [p2])).rows[0];
+    const r = await scanLifecycle(db.servicePool, ghStub(files) as any, proj);
+    expect(r.found).toBe(2);
+    const rows = await db.servicePool.query(
+      "select method, path from endpoints where project_id=$1 order by path", [p2]);
+    expect(rows.rows.map((x: any) => `${x.method} ${x.path}`)).toEqual(["POST /api/v1/orders", "GET /ping"]);
+  });
+
   it("first scan produces evidence-backed states", async () => {
     const r = await scanLifecycle(db.servicePool, ghStub(FILES) as any, await project());
     expect(r.found).toBe(3); // GET /users (spec), POST /users, GET /health
