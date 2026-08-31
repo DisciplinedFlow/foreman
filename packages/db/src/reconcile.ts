@@ -1,0 +1,15 @@
+import type { Queryable } from "./events.js";
+
+// GHA reconciliation (Phase 2 deviation 6): dependency changes have no webhook, so a
+// cron enqueues a foreman.reconcile job per GitHub-connected project; the github
+// worker routes it to fullSync.
+export async function enqueueReconcileJobs(q: Queryable): Promise<number> {
+  const res = await q.query(
+    `insert into sync_jobs (organisation_id, installation_id, delivery_id, event_name, payload)
+     select organisation_id, gh_installation_id,
+            'reconcile:' || id || ':' || extract(epoch from now())::bigint,
+            'foreman.reconcile', jsonb_build_object('project_id', id)
+     from projects
+     where gh_project_node_id is not null and gh_installation_id is not null`);
+  return res.rowCount ?? 0;
+}

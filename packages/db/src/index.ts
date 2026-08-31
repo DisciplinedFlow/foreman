@@ -4,3 +4,4 @@ export {
   claimNextWorkItem, extendLease, sweepExpiredLeases, enqueueWorkItem, completeWorkItem,
   WipLimitExceededError, type WorkItemRow,
 } from "./queue.js";
+export { enqueueReconcileJobs } from "./reconcile.js";

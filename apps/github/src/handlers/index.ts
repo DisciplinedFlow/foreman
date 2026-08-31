@@ -1,18 +1,34 @@
 import type { Queryable } from "@foreman/db";
 import { EchoCache, InMemoryKv } from "@foreman/github-client";
 import type { SyncJob } from "../jobs.js";
+import type { GithubClientLike } from "../sync/field-map.js";
+import { fullSync } from "../sync/full-sync.js";
 import { handleIssuesEvent, handlePullRequestEvent } from "./issues.js";
 import { handleProjectItemEvent } from "./project-item.js";
 
 const fallbackEcho = new EchoCache(new InMemoryKv());
 
+export interface HandlerContext {
+  echo?: EchoCache;
+  gh?: GithubClientLike;
+}
+
 export async function handleSyncJob(
-  tx: Queryable, job: SyncJob, ctx: { echo?: EchoCache } = {},
+  tx: Queryable, job: SyncJob, ctx: HandlerContext = {},
 ): Promise<void> {
   switch (job.event_name) {
     case "issues": return handleIssuesEvent(tx, job);
     case "pull_request": return handlePullRequestEvent(tx, job);
     case "projects_v2_item": return handleProjectItemEvent(tx, ctx.echo ?? fallbackEcho, job);
+    case "foreman.reconcile": {
+      if (ctx.gh === undefined) { console.warn("reconcile skipped: no github client wired"); return; }
+      const projectId = (job.payload as { project_id?: string } | null)?.project_id;
+      if (projectId === undefined) return;
+      const proj = await tx.query("select * from projects where id = $1", [projectId]);
+      if (proj.rowCount === 0 || proj.rows[0].gh_project_node_id === null) return;
+      await fullSync({ tx, gh: ctx.gh }, proj.rows[0]);
+      return;
+    }
     default: return; // unhandled event names are noise, not errors
   }
 }
