@@ -15,15 +15,16 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "pg": "^8.13.0",
-    "zod": "^3.23.0",
+    "@anthropic-ai/sdk": "^0.122.0",
     "@foreman/db": "workspace:*",
-    "@foreman/events": "workspace:*"
+    "@foreman/events": "workspace:*",
+    "pg": "^8.13.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
-    "typescript": "^5.6.0",
+    "@types/pg": "^8.11.0",
     "tsx": "^4.19.0",
-    "vitest": "^3.0.0",
-    "@types/pg": "^8.11.0"
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
   }
 }
