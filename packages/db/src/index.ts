@@ -1,2 +1,6 @@
 export { migrate } from "./migrate.js";
 export { appendEvent, type Queryable } from "./events.js";
+export {
+  claimNextWorkItem, extendLease, sweepExpiredLeases, enqueueWorkItem, completeWorkItem,
+  WipLimitExceededError, type WorkItemRow,
+} from "./queue.js";
