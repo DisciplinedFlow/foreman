@@ -1,5 +1,10 @@
 # Foreman Phase 2 — GitHub App + Projector Implementation Plan
 
+> **EXECUTED 31-08-2026** — all 11 tasks landed on main (commits a2bf2b7..a8de095), 71 tests green.
+> Deviations from plan text: JWT test epoch constants were corrected (plan's 1782561540 was
+> miscomputed; 2026-08-31T12:00Z is 1788177600); `enqueueReconcileJobs` lives in `@foreman/db`
+> (not scheduler-local) so the round-trip test can exercise it without an app→app import.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Connect Foreman to GitHub — a credential-pluggable GitHub App (`apps/github`) that verifies/dedupes webhooks, syncs issues and Projects v2 fields bidirectionally with echo suppression, plus the projector service (`apps/projector`) that replays the event log into projections, starting with the GNT-5 critical path.
