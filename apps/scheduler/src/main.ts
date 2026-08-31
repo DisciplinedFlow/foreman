@@ -1,7 +1,7 @@
 import pg from "pg";
 import { sweepExpiredLeases, enqueueReconcileJobs } from "@foreman/db";
 import { detectStalls } from "./stall.js";
-import { generateBrief, briefDue, deliverBrief, regenerateOverview, llmFromEnv } from "foreman-gen/lib";
+import { generateBrief, briefDue, deliverBrief, mailerFromEnv, regenerateOverview, llmFromEnv } from "foreman-gen/lib";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const INTERVAL = Number(process.env.SWEEP_INTERVAL_MS ?? 30_000);
@@ -35,7 +35,7 @@ if (BRIEF_TICK_SEC > 0) {
       for (const p of projects.rows) {
         if (!briefDue(p.brief_schedule, p.brief_timezone, p.last_end, new Date())) continue;
         const brief = await generateBrief(pool, p.id);
-        const channels = await deliverBrief(pool, brief);
+        const channels = await deliverBrief(pool, brief, { mailer: mailerFromEnv() });
         console.log(`brief ${brief.id} generated for ${p.id}; delivered: ${channels.join(",") || "none"}`);
       }
     })().catch(err => console.error("brief tick failed", err));

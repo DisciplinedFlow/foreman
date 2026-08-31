@@ -243,14 +243,19 @@ describe("api routes", () => {
     expect(e.rows[0].payload).toEqual({ from: 100, to: 5 });
   });
 
-  it("briefs are listed newest-first", async () => {
-    await db.servicePool.query(
+  it("briefs are listed newest-first with delivery status (BRF-6)", async () => {
+    const briefId = (await db.servicePool.query(
       `insert into briefs (organisation_id, project_id, window_start, window_end, content)
-       values ($1,$2,'2026-08-30','2026-08-31','{"window":{}}')`, [a.orgId, a.projectId]);
+       values ($1,$2,'2026-08-30','2026-08-31','{"window":{}}') returning id`, [a.orgId, a.projectId])).rows[0].id;
+    await db.servicePool.query(
+      `insert into events (organisation_id, project_id, type, payload, occurred_at)
+       values ($1,$2,'brief.delivered',$3,now())`,
+      [a.orgId, a.projectId, JSON.stringify({ brief_id: briefId, channel: "webhook" })]);
     const res = await get(`/api/projects/${a.projectId}/briefs`, cookieA);
     const { briefs } = await res.json();
     expect(briefs.length).toBe(1);
     expect(briefs[0].content).toEqual({ window: {} });
+    expect(briefs[0].delivered).toEqual(["webhook"]);
   });
 
   it("overview: regenerate → list → human override bumps version and pins", async () => {

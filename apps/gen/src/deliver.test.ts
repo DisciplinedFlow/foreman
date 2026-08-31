@@ -66,6 +66,30 @@ describe("deliverBrief (BRF-4)", () => {
     expect(e.rowCount).toBe(0);
   });
 
+  it("email channel: brief_email + mailer → html sent and brief.delivered {email}", async () => {
+    await db.servicePool.query(
+      "update projects set brief_email='pm@test.local', brief_webhook_url=null where id=$1", [projectId]);
+    const brief = await generateBrief(db.servicePool as pg.Pool, projectId);
+    const sent: any[] = [];
+    const channels = await deliverBrief(db.servicePool as pg.Pool, brief, {
+      mailer: { send: async (to, subject, html) => { sent.push({ to, subject, html }); } },
+    });
+    expect(channels).toEqual(["email"]);
+    expect(sent[0].to).toBe("pm@test.local");
+    expect(sent[0].html).toContain("Foreman brief");
+    const e = await db.servicePool.query(
+      "select 1 from events where type='brief.delivered' and payload->>'brief_id'=$1 and payload->>'channel'='email'",
+      [brief.id]);
+    expect(e.rowCount).toBe(1);
+    await db.servicePool.query("update projects set brief_email=null where id=$1", [projectId]);
+  });
+
+  it("SmtpMailer sends through nodemailer (jsonTransport)", async () => {
+    const { SmtpMailer } = await import("./deliver.js");
+    const mailer = new SmtpMailer({ jsonTransport: true } as any);
+    await expect(mailer.send("x@test.local", "subject", "<p>hi</p>")).resolves.toBeUndefined();
+  });
+
   it("no webhook URL → no fetch at all", async () => {
     let called = 0;
     const brief = await makeBrief(null);

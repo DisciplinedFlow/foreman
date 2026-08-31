@@ -217,10 +217,17 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
   api.get("/projects/:id/briefs", wrap(async (req, res) => {
     const { userId } = req as AuthedRequest;
     const limit = Math.min(50, Number(req.query.limit ?? 10) || 10);
-    const briefs = await withUser(deps.appPool, userId, async (tx) =>
-      (await tx.query(
+    const briefs = await withUser(deps.appPool, userId, async (tx) => {
+      const rows = await tx.query(
         `select id, window_start, window_end, content, generated_at
-         from briefs where project_id = $1 order by window_end desc limit $2`, [req.params.id, limit])).rows);
+         from briefs where project_id = $1 order by window_end desc limit $2`, [req.params.id, limit]);
+      // BRF-6: delivery status from the brief.delivered audit trail
+      const delivered = await tx.query(
+        `select payload->>'brief_id' as brief_id, array_agg(distinct payload->>'channel') as channels
+         from events where project_id = $1 and type = 'brief.delivered' group by 1`, [req.params.id]);
+      const byBrief = new Map(delivered.rows.map((d: any) => [d.brief_id, d.channels]));
+      return rows.rows.map((b: any) => ({ ...b, delivered: byBrief.get(b.id) ?? [] }));
+    });
     res.json({ briefs });
   }));
 

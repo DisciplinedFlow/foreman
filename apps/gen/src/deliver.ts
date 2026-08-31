@@ -1,3 +1,4 @@
+import nodemailer from "nodemailer";
 import type pg from "pg";
 import { appendEvent } from "@foreman/db";
 import type { BriefContent, BriefRow } from "./brief.js";
@@ -30,11 +31,28 @@ export function renderBriefHtml(c: BriefContent): string {
 
 export interface Mailer { send(to: string, subject: string, html: string): Promise<void> }
 
-// Deviation 1: SMTP transport lands with hosted hardening; the seam is the design.
 export class LogMailer implements Mailer {
   async send(to: string, subject: string): Promise<void> {
     console.log(`[brief mail] to=${to} subject=${subject} (no SMTP transport configured)`);
   }
+}
+
+// BRF-4: real SMTP behind the Phase 5 seam. Accepts a nodemailer transport
+// config (an smtp:// URL string in production, jsonTransport in tests).
+export class SmtpMailer implements Mailer {
+  private transport: nodemailer.Transporter;
+  constructor(config: string | Parameters<typeof nodemailer.createTransport>[0],
+    private from = process.env.FOREMAN_SMTP_FROM ?? "foreman@localhost") {
+    this.transport = nodemailer.createTransport(config as string);
+  }
+  async send(to: string, subject: string, html: string): Promise<void> {
+    await this.transport.sendMail({ from: this.from, to, subject, html });
+  }
+}
+
+export function mailerFromEnv(): Mailer {
+  const url = process.env.FOREMAN_SMTP_URL;
+  return url !== undefined && url !== "" ? new SmtpMailer(url) : new LogMailer();
 }
 
 export async function deliverBrief(
@@ -43,8 +61,10 @@ export async function deliverBrief(
   deps: { fetchImpl?: typeof fetch; mailer?: Mailer } = {},
 ): Promise<string[]> {
   const delivered: string[] = [];
-  const proj = await pool.query("select brief_webhook_url from projects where id = $1", [brief.project_id]);
+  const proj = await pool.query(
+    "select brief_webhook_url, brief_email from projects where id = $1", [brief.project_id]);
   const webhookUrl: string | null = proj.rows[0]?.brief_webhook_url ?? null;
+  const briefEmail: string | null = proj.rows[0]?.brief_email ?? null;
 
   if (webhookUrl !== null) {
     const f = deps.fetchImpl ?? fetch;
@@ -69,6 +89,20 @@ export async function deliverBrief(
       }
     } catch (err) {
       console.error(`brief webhook delivery failed`, err);
+    }
+  }
+
+  if (briefEmail !== null && deps.mailer !== undefined) {
+    try {
+      const day = new Date(brief.window_end).toISOString().slice(0, 10);
+      await deps.mailer.send(briefEmail, `Foreman brief — ${day}`, renderBriefHtml(brief.content));
+      await appendEvent(pool, {
+        organisation_id: brief.organisation_id, project_id: brief.project_id,
+        type: "brief.delivered", payload: { brief_id: brief.id, channel: "email" },
+      });
+      delivered.push("email");
+    } catch (err) {
+      console.error("brief email delivery failed", err);
     }
   }
 
