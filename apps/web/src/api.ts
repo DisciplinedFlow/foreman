@@ -7,8 +7,24 @@ export class ApiError extends Error {
   }
 }
 
+// WL-5 double-submit: the fmn_csrf cookie is deliberately readable; mutations
+// echo it back as a header.
+function csrfToken(): string | undefined {
+  return document.cookie.split(";").map((s) => s.trim())
+    .find((s) => s.startsWith("fmn_csrf="))?.slice("fmn_csrf=".length);
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { credentials: "include", ...init });
+  const method = (init?.method ?? "GET").toUpperCase();
+  const csrf = method === "GET" || method === "HEAD" ? undefined : csrfToken();
+  const res = await fetch(path, {
+    credentials: "include",
+    ...init,
+    headers: {
+      ...(init?.headers as Record<string, string> | undefined),
+      ...(csrf !== undefined ? { "x-csrf-token": csrf } : {}),
+    },
+  });
   if (!res.ok) throw new ApiError(res.status);
   return res.json() as Promise<T>;
 }
