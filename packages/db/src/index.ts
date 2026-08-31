@@ -5,3 +5,4 @@ export {
   WipLimitExceededError, type WorkItemRow,
 } from "./queue.js";
 export { enqueueReconcileJobs } from "./reconcile.js";
+export { createAgentToken, authenticateAgentToken, revokeAgentToken, type AgentAuthCtx } from "./tokens.js";

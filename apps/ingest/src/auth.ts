@@ -1,7 +1,9 @@
-// Duplicated from apps/mcp/src/auth.ts (Phase 4 deviation 6): two consumers
-// don't justify a shared package yet. Keep in sync if the token shape changes.
-import crypto from "node:crypto";
+// Phase 8: the Phase 4 copy is gone — token logic lives in @foreman/db now.
+// Same exported names/behaviour as before.
 import type pg from "pg";
+import {
+  createAgentToken as dbCreate, authenticateAgentToken as dbAuth,
+} from "@foreman/db";
 
 export interface AuthCtx {
   tokenId: string;
@@ -10,43 +12,14 @@ export interface AuthCtx {
   agentId: string | null;
 }
 
-const TOKEN_PREFIX = "fmn_agt_";
-
-function hashToken(token: string): string {
-  return crypto.createHash("sha256").update(token).digest("hex");
-}
-
-export async function createAgentToken(
-  pool: pg.Pool,
-  { organisationId, projectId }: { organisationId: string; projectId: string },
+export function createAgentToken(
+  pool: pg.Pool, opts: { organisationId: string; projectId: string },
 ): Promise<{ token: string; id: string }> {
-  const token = TOKEN_PREFIX + crypto.randomBytes(24).toString("base64url");
-  const res = await pool.query(
-    `insert into agent_tokens (organisation_id, project_id, token_hash) values ($1,$2,$3) returning id`,
-    [organisationId, projectId, hashToken(token)]);
-  return { token, id: res.rows[0].id };
+  return dbCreate(pool, opts);
 }
 
-export async function authenticate(
-  pool: pg.Pool,
-  authorizationHeader: string | undefined,
+export function authenticate(
+  pool: pg.Pool, authorizationHeader: string | undefined,
 ): Promise<AuthCtx | null> {
-  if (!authorizationHeader?.startsWith("Bearer ")) return null;
-  const token = authorizationHeader.slice("Bearer ".length).trim();
-  if (!token) return null;
-
-  const res = await pool.query(
-    `update agent_tokens set last_used_at = now()
-     where token_hash = $1 and revoked_at is null
-     returning id, organisation_id, project_id, agent_id`,
-    [hashToken(token)]);
-  if (!res.rowCount) return null;
-
-  const row = res.rows[0];
-  return {
-    tokenId: row.id,
-    organisationId: row.organisation_id,
-    projectId: row.project_id,
-    agentId: row.agent_id,
-  };
+  return dbAuth(pool, authorizationHeader);
 }
