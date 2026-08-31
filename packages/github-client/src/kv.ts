@@ -16,10 +16,15 @@ export class InMemoryKv implements Kv {
   async set(k: string, v: string, ttlSec: number) { this.m.set(k, { v, exp: Date.now() + ttlSec * 1000 }); }
   async del(k: string) { this.m.delete(k); }
   async incr(k: string, ttlSec: number) {
-    const cur = await this.get(k);
-    if (cur === null) { this.m.set(k, { v: "1", exp: Date.now() + ttlSec * 1000 }); return 1; }
-    const next = Number(cur) + 1;
-    this.m.get(k)!.v = String(next); // keep the original expiry
+    // NB: no await between read and write — concurrent callers must not
+    // interleave (the Phase 7 load harness caught exactly that bug).
+    const e = this.m.get(k);
+    if (e === undefined || e.exp < Date.now()) {
+      this.m.set(k, { v: "1", exp: Date.now() + ttlSec * 1000 });
+      return 1;
+    }
+    const next = Number(e.v) + 1;
+    e.v = String(next); // keep the original expiry
     return next;
   }
 }

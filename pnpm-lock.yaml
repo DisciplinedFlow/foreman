@@ -229,12 +229,18 @@ importers:
         specifier: ^3.23.0
         version: 3.25.76
     devDependencies:
+      '@foreman/github-client':
+        specifier: workspace:*
+        version: link:../../packages/github-client
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.25
       '@types/pg':
         specifier: ^8.11.0
         version: 8.23.1
+      foreman-api:
+        specifier: workspace:*
+        version: link:../api
       tsx:
         specifier: ^4.19.0
         version: 4.23.13

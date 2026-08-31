@@ -60,6 +60,13 @@ describe("GithubClient", () => {
     expect(seen.length).toBe(8);
   });
 
+  it("InMemoryKv.incr is atomic under parallel callers (load-harness regression)", async () => {
+    const kv = new InMemoryKv();
+    const counts = await Promise.all(Array.from({ length: 100 }, () => kv.incr("burst", 60)));
+    expect(Math.max(...counts)).toBe(100);
+    expect(new Set(counts).size).toBe(100); // every caller saw a distinct count
+  });
+
   it("no observed limit yet → the bucket does not block", async () => {
     const kv = new InMemoryKv();
     const { f, seen } = stub(Array.from({ length: 3 }, () => ({ status: 200 })));
