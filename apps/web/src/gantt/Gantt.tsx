@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   buildScale, buildRows, routeArrow, windowRows, type GanttItem, type GanttRow,
 } from "./layout.js";
+import { dragResult, type DragMode } from "./drag.js";
 
 const ROW_H = 28;
 const LABEL_W = 220;
@@ -41,8 +42,31 @@ export function Gantt({ items, deps, viewportHeight = 600, onReschedule }: Gantt
 
   const chartW = LABEL_W + Math.max(scale.days * scale.pxPerDay, 200) + 60;
   const totalH = rows.length * ROW_H;
-  // touched by Task 10 (drag); void-referenced so the prop is wired from day one
-  void onReschedule;
+
+  // Drag state: preview locally, commit on pointerup (GNT-8; deviation 4 makes it async).
+  const [drag, setDrag] = useState<{ id: string; mode: DragMode; originX: number; dx: number } | null>(null);
+
+  const onBarPointerDown = (row: GanttRow, mode: DragMode) => (e: React.PointerEvent<SVGRectElement>) => {
+    if (row.startAt === null || row.targetAt === null) return; // undated bars aren't draggable
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    setDrag({ id: row.id, mode, originX: e.clientX, dx: 0 });
+  };
+  const onBarPointerMove = (e: React.PointerEvent<SVGRectElement>) => {
+    setDrag((d) => (d === null ? null : { ...d, dx: e.clientX - d.originX }));
+  };
+  const onBarPointerUp = (row: GanttRow) => (e: React.PointerEvent<SVGRectElement>) => {
+    setDrag((d) => {
+      if (d !== null && d.id === row.id) {
+        const change = dragResult(row, e.clientX - d.originX, scale.pxPerDay, d.mode);
+        if (Object.keys(change).length > 0) onReschedule(row.id, change);
+      }
+      return null;
+    });
+  };
+  const dragOffset = (row: GanttRow): number =>
+    drag !== null && drag.id === row.id && drag.mode === "move" ? drag.dx : 0;
+  const dragWiden = (row: GanttRow): number =>
+    drag !== null && drag.id === row.id && drag.mode === "resize-end" ? drag.dx : 0;
 
   const toggle = (row: GanttRow) =>
     setCollapsed((c) => {
@@ -90,18 +114,36 @@ export function Gantt({ items, deps, viewportHeight = 600, onReschedule }: Gantt
               <rect
                 data-item-id={r.id}
                 className={r.critical ? "gantt-critical" : ""}
-                x={LABEL_W + r.x}
+                x={LABEL_W + r.x + dragOffset(r)}
                 y={5}
-                width={r.w}
+                width={Math.max(scale.pxPerDay / 2, r.w + dragWiden(r))}
                 height={ROW_H - 10}
                 rx={4}
                 fill={STATUS_FILL[r.status] ?? "#8b949e"}
                 stroke={r.critical ? "#d1242f" : "none"}
                 strokeWidth={r.critical ? 2.5 : 0}
                 opacity={r.startAt === null ? 0.35 : 1}
+                style={{ cursor: r.startAt !== null ? "grab" : "default", touchAction: "none" }}
+                onPointerDown={onBarPointerDown(r, "move")}
+                onPointerMove={onBarPointerMove}
+                onPointerUp={onBarPointerUp(r)}
               >
                 <title>{`${r.title} (${r.status}${r.critical ? ", critical" : ""})`}</title>
               </rect>
+              {r.startAt !== null && (
+                <rect
+                  data-resize-id={r.id}
+                  x={LABEL_W + r.x + r.w + dragWiden(r) - 6}
+                  y={5}
+                  width={6}
+                  height={ROW_H - 10}
+                  fill="transparent"
+                  style={{ cursor: "ew-resize", touchAction: "none" }}
+                  onPointerDown={onBarPointerDown(r, "resize-end")}
+                  onPointerMove={onBarPointerMove}
+                  onPointerUp={onBarPointerUp(r)}
+                />
+              )}
             </g>
           ))}
         </svg>

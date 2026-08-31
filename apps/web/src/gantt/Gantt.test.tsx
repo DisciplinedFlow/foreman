@@ -34,6 +34,22 @@ describe("Gantt", () => {
     expect(document.querySelector('[data-item-id="child"]')).toBeNull();
   });
 
+  it("dragging a bar 50px fires onReschedule with a 2-day shift", () => {
+    const calls: Array<[string, object]> = [];
+    const items = [item("drag-me")];
+    render(<Gantt items={items} deps={[]} viewportHeight={700}
+      onReschedule={(id, change) => calls.push([id, change])} />);
+    const bar = document.querySelector('[data-item-id="drag-me"]')!;
+    // jsdom has no PointerEvent; MouseEvent carries clientX and React's
+    // onPointer* handlers listen by event type, so this exercises the real path.
+    const pointer = (type: string, clientX: number) =>
+      fireEvent(bar, new MouseEvent(type, { clientX, bubbles: true }));
+    pointer("pointerdown", 100);
+    pointer("pointermove", 150);
+    pointer("pointerup", 150);
+    expect(calls).toEqual([["drag-me", { start_at: "2026-09-03", target_at: "2026-09-05" }]]);
+  });
+
   it("draws an arrow between blocker and blocked", () => {
     const items = [item("A"), item("B", { startAt: "2026-09-04", targetAt: "2026-09-05" })];
     render(<Gantt items={items} deps={[{ blocked_id: "B", blocker_id: "A" }]} viewportHeight={700} onReschedule={() => {}} />);
