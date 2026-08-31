@@ -61,16 +61,10 @@ With the `foreman` MCP server configured (step 3 note), an agent can run the who
 `foreman__agent_announce` → `foreman__work_claim {wait:true}` → poll `tasks/get` →
 `foreman__work_report` → `foreman__work_checkpoint` (answer it in the UI's decision card) →
 `foreman__work_complete`. The bundled skill (`skills/foreman/SKILL.md` in the plugin) teaches
-Claude this loop; enqueue work by creating items via GitHub sync (step 5) — or, until you connect
-GitHub, by SQL (**manual-SQL gap**, admin UI pending):
-
-```sql
-insert into work_items (organisation_id, project_id, title, intent, acceptance)
-select organisation_id, id, 'my first item', 'do the thing', '["it works"]'
-from projects where name = 'dev-project';
-```
-
-(`docker exec -it <postgres-container> psql -U postgres foreman` to get a prompt.)
+Claude this loop. Enqueue work with the **+ New item** button on the Gantt tab (items on
+GitHub-connected projects are created as issues through the sync worker). Agent tokens can be
+minted and revoked in **Settings → Agent tokens** — `db:seed` is only needed for the very first
+bootstrap.
 
 ## 5. Connect GitHub
 
@@ -79,24 +73,19 @@ With `foreman-github` running and reachable from GitHub (use a tunnel for local 
 
 1. Visit `http://localhost:3002/setup/github/start?org_slug=dev&gh_org=<your-github-org>`.
 2. Approve the App manifest on GitHub → you're redirected back → install the App on your repos.
-3. Link the project to repos/board (**manual-SQL gap**, Phase 3 UI pending):
-   ```sql
-   update projects set gh_repos = array['your-org/your-repo'], gh_installation_id = <id>
-   where name = 'dev-project';
-   ```
-   (the installation id is printed in the `github_installations` table by the install callback.)
+3. Link the project to repos and the board in **Settings**: pick the installation from the
+   dropdown (populated by the install callback), enter `owner/repo` names and the Projects v2
+   board node id, Save.
 4. Issues sync both ways within a webhook round-trip; the Lifecycle tab's **Rescan** discovers
    your API endpoints; drag a Gantt bar and watch the Projects v2 date move.
 
 ## 6. Briefs and overview
 
-```sql
-update projects set brief_schedule = 'daily', brief_timezone = 'Europe/Amsterdam',
-  brief_webhook_url = 'https://your-webhook', brief_email = 'you@example.com'
-where name = 'dev-project';
-```
-
-Briefs fire at 07:00 project-local time (email needs `FOREMAN_SMTP_URL`). The Overview tab's
+Configure the brief in **Settings → Brief** (schedule, IANA timezone, webhook URL, email —
+all validated on save). Briefs fire at 07:00 project-local time (email needs
+`FOREMAN_SMTP_URL`). The **Metrics** tab tracks the PRD §1.7 numbers (supervised throughput,
+stall-detection latency, brief delivery), and **Settings → Data** exports the full event log
+as NDJSON (see `docs/export.md`). The Overview tab's
 **Regenerate** works with no API key (deterministic extractive sections); set
 `ANTHROPIC_API_KEY` for generated prose.
 
