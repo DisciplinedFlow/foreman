@@ -42,8 +42,11 @@ export async function claimNextWorkItem(pool: pg.Pool,
     await c.query("begin");
     const agent = await c.query("select organisation_id, wip_limit from agents where id = $1 for update", [agentId]);
     if (!agent.rowCount) throw new Error("unknown agent");
-    const proj = await c.query("select wip_limit from projects where id = $1 for update", [projectId]);
+    const proj = await c.query("select organisation_id, wip_limit from projects where id = $1 for update", [projectId]);
     if (!proj.rowCount) throw new Error("unknown project");
+    if (agent.rows[0].organisation_id !== proj.rows[0].organisation_id) {
+      throw new Error("agent and project belong to different organisations");
+    }
     const active = await c.query(
       `select count(*) filter (where claimed_by = $1)::int as agent_n,
               count(*)::int as project_n

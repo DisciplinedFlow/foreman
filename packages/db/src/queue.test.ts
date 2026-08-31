@@ -102,6 +102,18 @@ describe("queue engine", () => {
     } finally { await db.teardown(); }
   });
 
+  it("QUE-8: claim rejects an agent and project from different organisations", async () => {
+    const db = await createTestDatabase();
+    try {
+      const a = await seedOrgWithUser(db.servicePool, "q8-a");
+      const b = await seedOrgWithUser(db.servicePool, "q8-b");
+      await enqueueWorkItem(db.servicePool, { organisationId: a.orgId, projectId: a.projectId, title: "x" });
+      const agentInB = await seedAgent(db.servicePool, b.orgId, b.projectId, "cross-org-agent");
+      await expect(claimNextWorkItem(db.servicePool, { projectId: a.projectId, agentId: agentInB }))
+        .rejects.toThrow(/different organisations/);
+    } finally { await db.teardown(); }
+  });
+
   it("QUE-7: completion without an acceptance verdict is rejected when criteria exist", async () => {
     const db = await createTestDatabase();
     try {

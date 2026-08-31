@@ -38,4 +38,29 @@ describe("RLS", () => {
       } finally { await appClient.end(); }
     } finally { await db.teardown(); }
   });
+
+  it("SEC-1: a forged pg_temp organisation_members table cannot defeat is_member", async () => {
+    const db = await createTestDatabase();
+    try {
+      const a = await seedOrgWithUser(db.servicePool, "org-a-temp");
+      const b = await seedOrgWithUser(db.servicePool, "org-b-temp");
+      await db.servicePool.query(
+        "insert into projects (organisation_id, name) values ($1,'secret-b-temp')", [b.orgId]);
+
+      const appClient = new pg.Client({ connectionString: db.appUrl });
+      await appClient.connect();
+      try {
+        await appClient.query("select set_config('app.user_id', $1, false)", [a.userId]);
+        // Attempt to shadow the real organisation_members table via search_path's implicit
+        // pg_temp-first lookup, forging membership in org B for org A's user.
+        await appClient.query("create temp table organisation_members (organisation_id uuid, user_id uuid)");
+        await appClient.query(
+          "insert into organisation_members (organisation_id, user_id) values ($1,$2)", [b.orgId, a.userId]);
+
+        const read = await appClient.query("select * from projects");
+        expect(read.rows.every(r => r.organisation_id === a.orgId)).toBe(true);
+        expect(read.rows.find(r => r.name === "secret-b-temp")).toBeUndefined();
+      } finally { await appClient.end(); }
+    } finally { await db.teardown(); }
+  });
 });

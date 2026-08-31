@@ -19,11 +19,11 @@ function err(code: string, message: string): CallToolResult {
 const NOT_ANNOUNCED = err("not_announced", "agent has not announced yet; call foreman__agent_announce first");
 
 async function assertOwnsWorkItem(q: Queryable, workItemId: string, agentId: string):
-  Promise<{ organisationId: string; projectId: string } | null> {
+  Promise<{ organisationId: string; projectId: string; status: string } | null> {
   const res = await q.query(
-    "select organisation_id, project_id, claimed_by from work_items where id = $1", [workItemId]);
+    "select organisation_id, project_id, status, claimed_by from work_items where id = $1", [workItemId]);
   if (!res.rowCount || res.rows[0].claimed_by !== agentId) return null;
-  return { organisationId: res.rows[0].organisation_id, projectId: res.rows[0].project_id };
+  return { organisationId: res.rows[0].organisation_id, projectId: res.rows[0].project_id, status: res.rows[0].status };
 }
 
 // Every mutation + its event must land atomically (X-1): check out one client, begin/commit/rollback
@@ -161,8 +161,15 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
     return withTx(pool, async (c) => {
       const owned = await assertOwnsWorkItem(c, work_item_id, agentId);
       if (!owned) return err("not_yours", "work item is not claimed by you");
+      const wasBlocked = owned.status === "blocked";
       await c.query("update work_items set status = 'in_progress', updated_at = now() where id = $1", [work_item_id]);
       await extendLease(c, work_item_id, agentId);
+      if (wasBlocked) {
+        await appendEvent(c, {
+          organisation_id: owned.organisationId, project_id: owned.projectId, agent_id: agentId,
+          work_item_id, type: "work.unblocked", payload: {},
+        });
+      }
       await appendEvent(c, {
         organisation_id: owned.organisationId, project_id: owned.projectId, agent_id: agentId,
         work_item_id, type: "work.progressed", payload: { note: progress_note, percent },
@@ -251,6 +258,7 @@ export function buildMcpServer(pool: pg.Pool, ctx: AuthCtx): McpServer {
     description: "Poll a checkpoint for a human answer.",
     inputSchema: { checkpoint_id: z.string().uuid() },
   }, async ({ checkpoint_id }) => {
+    if (!ctx.agentId) return NOT_ANNOUNCED;
     return withTx(pool, async (c) => {
       // Scoped to this org AND to the agent that raised the checkpoint: a checkpoint id alone must
       // never reveal whether it exists, let alone its contents, to a caller outside its tenant.

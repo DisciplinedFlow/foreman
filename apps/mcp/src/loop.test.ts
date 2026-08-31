@@ -64,6 +64,48 @@ describe("MCP full agent loop", () => {
     } finally { await srv.close(); await db.teardown(); }
   }, 60_000);
 
+  it("reporting progress on a blocked item logs work.unblocked", async () => {
+    const db = await createTestDatabase();
+    const srv = await startServer(db.servicePool);
+    try {
+      const { orgId, projectId } = await seedOrgWithUser(db.servicePool, "unblock");
+      const { token } = await createAgentToken(db.servicePool, { organisationId: orgId, projectId });
+
+      const client = new Client({ name: "test-agent", version: "0.0.1" });
+      await client.connect(new StreamableHTTPClientTransport(new URL(srv.url), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } },
+      }));
+
+      const call = async (name: string, args: Record<string, unknown>) => {
+        const r = await client.callTool({ name, arguments: args });
+        expect(r.isError ?? false).toBe(false);
+        return JSON.parse((r.content as { type: string; text: string }[])[0]!.text);
+      };
+
+      await call("foreman__agent_announce", { display_name: "unblock-agent", platform: "test" });
+
+      const item = await enqueueWorkItem(db.servicePool, {
+        organisationId: orgId, projectId, title: "needs unblocking" });
+
+      const claim = await call("foreman__work_claim", {});
+      expect(claim.status).toBe("assigned");
+
+      await call("foreman__work_block", { work_item_id: item.id, reason: "waiting on input" });
+      const blocked = await db.servicePool.query("select status from work_items where id=$1", [item.id]);
+      expect(blocked.rows[0].status).toBe("blocked");
+
+      await call("foreman__work_report", { work_item_id: item.id, progress_note: "resuming" });
+
+      const status = await db.servicePool.query("select status from work_items where id=$1", [item.id]);
+      expect(status.rows[0].status).toBe("in_progress");
+      const unblocked = await db.servicePool.query(
+        "select payload from events where type='work.unblocked' and work_item_id=$1", [item.id]);
+      expect(unblocked.rowCount).toBe(1);
+
+      await client.close();
+    } finally { await srv.close(); await db.teardown(); }
+  }, 60_000);
+
   it("rejects a missing/bad bearer token", async () => {
     const db = await createTestDatabase();
     const srv = await startServer(db.servicePool);
