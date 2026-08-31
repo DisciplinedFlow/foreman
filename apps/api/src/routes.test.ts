@@ -289,6 +289,12 @@ describe("api routes", () => {
       body: JSON.stringify({ pinned: true }),
     });
     expect(bad.status).toBe(400);
+
+    // OVW-2: the revision trail carries both the generated and the human version
+    const revs = await (await get(`/api/projects/${a.projectId}/overview/in_flight/revisions`, cookieA)).json();
+    expect(revs.revisions.length).toBeGreaterThanOrEqual(2);
+    expect(revs.revisions[0].content).toBe("our edit");
+    expect(revs.revisions[0].caused_by).toBe("human");
   });
 
   it("comm-graph aggregates spawn events into weighted edges", async () => {

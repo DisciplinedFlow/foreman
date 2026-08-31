@@ -4,7 +4,7 @@ import { api, ApiError, patchSchedule, useProjectStream } from "../api.js";
 import { AgentTable, type AgentRow } from "../agents/AgentTable.js";
 import { DecisionCards, type CheckpointRow } from "../checkpoints/DecisionCards.js";
 import { CommGraph, type CommNode, type CommEdge } from "../graph/CommGraph.js";
-import { OverviewTab, type OverviewSection } from "../overview/OverviewTab.js";
+import { OverviewTab, type OverviewSection, type OverviewRevision } from "../overview/OverviewTab.js";
 import { Gantt } from "../gantt/Gantt.js";
 import { mergeSchedule, type GanttItem } from "../gantt/layout.js";
 
@@ -23,6 +23,7 @@ export function ProjectView() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<"gantt" | "agents" | "graph" | "overview">("gantt");
   const [overview, setOverview] = useState<OverviewSection[]>([]);
+  const [revisions, setRevisions] = useState<Record<string, OverviewRevision[]>>({});
   const [regenBusy, setRegenBusy] = useState(false);
   const [name, setName] = useState("");
   const [items, setItems] = useState<ItemRow[]>([]);
@@ -133,7 +134,13 @@ export function ProjectView() {
         : <p>No communication data yet.</p>)}
       {tab === "overview" && (
         <OverviewTab sections={overview} onOverride={onOverviewOverride}
-          onRegenerate={onOverviewRegenerate} busy={regenBusy} />
+          onRegenerate={onOverviewRegenerate} busy={regenBusy}
+          revisions={revisions}
+          onLoadHistory={(sectionId) => {
+            api<{ revisions: OverviewRevision[] }>(`/api/projects/${projectId}/overview/${sectionId}/revisions`)
+              .then((b) => setRevisions((r) => ({ ...r, [sectionId]: b.revisions })))
+              .catch(() => {});
+          }} />
       )}
     </main>
   );

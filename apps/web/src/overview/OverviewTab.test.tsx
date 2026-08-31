@@ -31,6 +31,20 @@ describe("OverviewTab", () => {
     expect(calls).toEqual([["shipped", { content: "my correction" }]]);
   });
 
+  it("history expander renders the diff of the latest two revisions (OVW-2)", async () => {
+    const loaded: string[] = [];
+    render(<OverviewTab sections={sections} onOverride={() => {}} onRegenerate={() => {}}
+      onLoadHistory={(s) => loaded.push(s)}
+      revisions={{ shipped: [
+        { version: 3, content: "line a\nline NEW", caused_by: "human", created_at: new Date().toISOString() },
+        { version: 2, content: "line a\nline OLD", caused_by: "cron", created_at: new Date().toISOString() },
+      ] }} />);
+    await userEvent.click(screen.getAllByRole("button", { name: /history/i })[0]!);
+    expect(loaded).toEqual(["shipped"]);
+    expect(screen.getByText(/\+ line NEW/)).toBeTruthy();
+    expect(screen.getByText(/- line OLD/)).toBeTruthy();
+  });
+
   it("pin toggle and regenerate fire their callbacks", async () => {
     const overrides: Array<[string, object]> = [];
     let regen = 0;

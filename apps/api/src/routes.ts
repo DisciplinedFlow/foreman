@@ -290,6 +290,16 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
     return res.json({ ok: true });
   }));
 
+  api.get("/projects/:id/overview/:sectionId/revisions", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const revisions = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        `select version, content, caused_by, created_at from overview_revisions
+         where project_id = $1 and section_id = $2 order by version desc limit 20`,
+        [req.params.id, req.params.sectionId])).rows);
+    res.json({ revisions });
+  }));
+
   api.post("/projects/:id/overview/regenerate", wrap(async (req, res) => {
     const { userId } = req as AuthedRequest;
     const visible = await withUser(deps.appPool, userId, async (tx) =>
