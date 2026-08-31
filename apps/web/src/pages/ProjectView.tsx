@@ -4,6 +4,7 @@ import { api, ApiError, patchSchedule, useProjectStream } from "../api.js";
 import { AgentTable, type AgentRow } from "../agents/AgentTable.js";
 import { DecisionCards, type CheckpointRow } from "../checkpoints/DecisionCards.js";
 import { CommGraph, type CommNode, type CommEdge } from "../graph/CommGraph.js";
+import { OverviewTab, type OverviewSection } from "../overview/OverviewTab.js";
 import { Gantt } from "../gantt/Gantt.js";
 import { mergeSchedule, type GanttItem } from "../gantt/layout.js";
 
@@ -20,7 +21,9 @@ export function ProjectView() {
   const { id } = useParams();
   const projectId = id!;
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"gantt" | "agents" | "graph">("gantt");
+  const [tab, setTab] = useState<"gantt" | "agents" | "graph" | "overview">("gantt");
+  const [overview, setOverview] = useState<OverviewSection[]>([]);
+  const [regenBusy, setRegenBusy] = useState(false);
   const [name, setName] = useState("");
   const [items, setItems] = useState<ItemRow[]>([]);
   const [deps, setDeps] = useState<Dep[]>([]);
@@ -78,6 +81,27 @@ export function ProjectView() {
     patchSchedule(itemId, change).catch(() => { void load(["items", "schedule"]); });
   };
 
+  const loadOverview = useCallback(() => {
+    api<{ sections: OverviewSection[] }>(`/api/projects/${projectId}/overview`)
+      .then((b) => setOverview(b.sections))
+      .catch(() => {});
+  }, [projectId]);
+
+  useEffect(() => { if (tab === "overview") loadOverview(); }, [tab, loadOverview]);
+
+  const onOverviewOverride = (sectionId: string, body: { content?: string; pinned?: boolean }) => {
+    api(`/api/projects/${projectId}/overview/${sectionId}`, {
+      method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).finally(loadOverview);
+  };
+
+  const onOverviewRegenerate = () => {
+    setRegenBusy(true);
+    api(`/api/projects/${projectId}/overview/regenerate`, { method: "POST" })
+      .finally(() => { setRegenBusy(false); loadOverview(); });
+  };
+
   const onCheckpointAnswer = (id: string, answer: string) => {
     api(`/api/checkpoints/${id}/answer`, {
       method: "POST", headers: { "content-type": "application/json" },
@@ -92,7 +116,8 @@ export function ProjectView() {
       <nav style={{ marginBottom: 12 }}>
         <button onClick={() => setTab("gantt")} disabled={tab === "gantt"}>Gantt</button>{" "}
         <button onClick={() => setTab("agents")} disabled={tab === "agents"}>Agents</button>{" "}
-        <button onClick={() => setTab("graph")} disabled={tab === "graph"}>Graph</button>
+        <button onClick={() => setTab("graph")} disabled={tab === "graph"}>Graph</button>{" "}
+        <button onClick={() => setTab("overview")} disabled={tab === "overview"}>Overview</button>
       </nav>
       {tab === "gantt" && <Gantt items={ganttItems} deps={deps} onReschedule={onReschedule} />}
       {tab === "agents" && (
@@ -106,6 +131,10 @@ export function ProjectView() {
       {tab === "graph" && (graph !== null
         ? <CommGraph nodes={graph.nodes} edges={graph.edges} />
         : <p>No communication data yet.</p>)}
+      {tab === "overview" && (
+        <OverviewTab sections={overview} onOverride={onOverviewOverride}
+          onRegenerate={onOverviewRegenerate} busy={regenBusy} />
+      )}
     </main>
   );
 }
