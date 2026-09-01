@@ -97,9 +97,13 @@ describe("phase 8 self-service loop", () => {
       acceptance_results: [{ criterion: "done right", met: true }],
     });
 
-    // 4. metrics reflect the supervised completion
+    // 4. metrics reflect the supervised completion. The project is GitHub-connected
+    // (step 1 set gh_installation_id), so throughput now measures merged-and-reviewed
+    // PRs rather than bare acceptance verdicts — and this loop never merges a PR.
     const metrics = await (await fetch(`${url}/api/projects/${projectId}/metrics`, { headers: { cookie } })).json();
-    expect(metrics.supervised_throughput.this_week).toBe(1);
+    expect(metrics.supervised_throughput.method).toBe("merged and reviewed");
+    expect(metrics.supervised_throughput.this_week).toBe(0);
+    expect(metrics.supervised_throughput.all_completions_this_week).toBe(1);
     expect(metrics.active_agents_24h).toBe(1);
 
     // 5. export carries the whole story
