@@ -36,6 +36,8 @@ const newItemBody = z.object({
   acceptance: z.array(z.string()).optional(),
 }).strict();
 
+const syncJobStatuses = new Set(["queued", "running", "done", "failed"]);
+
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const schedulePatch = z.object({
   start_at: dateStr.optional(),
@@ -475,6 +477,25 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
       [proj.organisation_id, proj.gh_installation_id ?? 0,
        `lifecycle:${req.params.id}:${Date.now()}`, JSON.stringify({ project_id: req.params.id })]);
     return res.status(202).json({ queued: true });
+  }));
+
+  // Audit #1 observability: sync_jobs has no project_id, so scope the read by
+  // the project's organisation_id (RLS on `projects` already gated visibility above).
+  api.get("/projects/:id/sync-jobs", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const proj = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query("select organisation_id from projects where id = $1", [req.params.id])).rows[0] ?? null);
+    if (proj === null) return res.status(404).json({ error: "not found" });
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    if (status !== undefined && !syncJobStatuses.has(status)) {
+      return res.status(400).json({ error: "invalid status" });
+    }
+    const jobs = await deps.servicePool.query(
+      `select id, event_name, action, attempts, last_error, created_at from sync_jobs
+       where organisation_id = $1 ${status !== undefined ? "and status = $2" : ""}
+       order by id desc`,
+      status !== undefined ? [proj.organisation_id, status] : [proj.organisation_id]);
+    res.json({ jobs: jobs.rows });
   }));
 
   // PRD §1.7 — deterministic reads over the event log; `now` is caller-suppliable

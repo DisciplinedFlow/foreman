@@ -442,6 +442,27 @@ describe("api routes", () => {
     expect(forbidden.status).toBe(404);
   });
 
+  it("sync-jobs returns failed jobs scoped to the project's org; cross-org 404s (audit #1)", async () => {
+    const job = (over: object) => db.servicePool.query(
+      `insert into sync_jobs (organisation_id, installation_id, delivery_id, event_name, action, payload, status, attempts, last_error)
+       values ($1,0,$2,'issues',null,'{}',$3,$4,$5) returning id`,
+      [a.orgId, `sj:${Math.random()}`, (over as any).status, (over as any).attempts ?? 1, (over as any).last_error ?? null]);
+    await job({ status: "failed", attempts: 5, last_error: "boom" });
+    await job({ status: "done" });
+    await db.servicePool.query(
+      `insert into sync_jobs (organisation_id, installation_id, delivery_id, event_name, action, payload, status, attempts, last_error)
+       values ($1,0,'sj:other','issues',null,'{}','failed',5,'other org') `, [b.orgId]);
+
+    const res = await get(`/api/projects/${a.projectId}/sync-jobs?status=failed`, cookieA);
+    expect(res.status).toBe(200);
+    const { jobs } = await res.json();
+    expect(jobs.length).toBe(1);
+    expect(jobs[0]).toMatchObject({ event_name: "issues", attempts: 5, last_error: "boom" });
+
+    const forbidden = await get(`/api/projects/${b.projectId}/sync-jobs?status=failed`, cookieA);
+    expect(forbidden.status).toBe(404);
+  });
+
   it("comm-graph aggregates spawn events into weighted edges", async () => {
     const parent = (await db.servicePool.query(
       "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'parent','test') returning id",

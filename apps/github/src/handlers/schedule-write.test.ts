@@ -29,12 +29,15 @@ describe("foreman.schedule_write handler", () => {
     expect(calls).toEqual([[{ workItemId: wi }, { startAt: "2026-09-02", targetAt: "2026-09-20" }]]);
   });
 
-  it("missing backbone in ctx → warn and return, no throw", async () => {
+  // Audit #1: a misconfigured worker (no backbone wired) now fails the job
+  // loudly instead of silently marking it done — see handlers/index.test.ts
+  // for the dispatcher-level coverage of all three backbone-dependent events.
+  it("missing backbone in ctx → throws, does not silently succeed", async () => {
     const job: SyncJob = {
       id: "2", organisation_id: orgId, installation_id: 0, delivery_id: "sw-2",
       event_name: "foreman.schedule_write", action: null, status: "running", attempts: 1,
       payload: { work_item_id: "00000000-0000-0000-0000-000000000000", target_at: "2026-09-20" },
     };
-    await expect(handleSyncJob(db.servicePool, job, {})).resolves.toBeUndefined();
+    await expect(handleSyncJob(db.servicePool, job, {})).rejects.toThrow("schedule_write handler not wired");
   });
 });

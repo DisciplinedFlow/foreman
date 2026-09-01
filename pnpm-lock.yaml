@@ -327,6 +327,9 @@ importers:
       foreman-gen:
         specifier: workspace:*
         version: link:../gen
+      foreman-github:
+        specifier: workspace:*
+        version: link:../github
       pg:
         specifier: ^8.13.0
         version: 8.23.0

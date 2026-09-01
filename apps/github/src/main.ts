@@ -63,6 +63,7 @@ export async function drainOnce(): Promise<boolean> {
   if (!job) return false;
   const client = await pool.connect();
   let ok = false;
+  let error: string | undefined;
   try {
     await client.query("begin");
     await handleSyncJob(client, job, ctx);
@@ -70,11 +71,12 @@ export async function drainOnce(): Promise<boolean> {
     ok = true;
   } catch (err) {
     await client.query("rollback");
+    error = err instanceof Error ? err.message : String(err);
     console.error(`sync job ${job.id} failed`, err);
   } finally {
     client.release();
   }
-  await completeSyncJob(pool, job.id, ok);
+  await completeSyncJob(pool, job.id, ok, error);
   return true;
 }
 
