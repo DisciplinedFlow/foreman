@@ -280,6 +280,27 @@ describe("api routes", () => {
     expect(forbidden.status).toBe(404);
   });
 
+  it("status PATCH on a claimed item -> 409, status unchanged, no event appended (queue-race guard)", async () => {
+    const ag = (await db.servicePool.query(
+      "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'status-race-agent','test') returning id",
+      [a.orgId, a.projectId])).rows[0].id;
+    const wi = (await db.servicePool.query(
+      `insert into work_items (organisation_id, project_id, title, status, claimed_by)
+       values ($1,$2,'claimed target','claimed',$3) returning id`, [a.orgId, a.projectId, ag])).rows[0].id;
+
+    const res = await fetch(`${url}/api/projects/${a.projectId}/items/${wi}/status`, {
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({ status: "blocked" }),
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "item is being worked by an agent" });
+    expect((await db.servicePool.query("select status, claimed_by from work_items where id=$1", [wi])).rows[0])
+      .toMatchObject({ status: "claimed", claimed_by: ag });
+    const e = await db.servicePool.query(
+      "select 1 from events where type='work.status_changed' and work_item_id=$1", [wi]);
+    expect(e.rowCount).toBe(0);
+  });
+
   it("briefs are listed newest-first with delivery status (BRF-6)", async () => {
     const briefId = (await db.servicePool.query(
       `insert into briefs (organisation_id, project_id, window_start, window_end, content)

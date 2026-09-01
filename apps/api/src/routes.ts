@@ -322,18 +322,35 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
     const parsed = statusBody.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid" });
 
-    const item = await withUser(deps.appPool, userId, async (tx) =>
+    const visible = await withUser(deps.appPool, userId, async (tx) =>
       (await tx.query(
-        "select organisation_id, status from work_items where id = $1 and project_id = $2",
-        [req.params.itemId, req.params.id])).rows[0] ?? null);
-    if (item === null) return res.status(404).json({ error: "not found" });
+        "select 1 from work_items where id = $1 and project_id = $2",
+        [req.params.itemId, req.params.id])).rowCount !== 0);
+    if (!visible) return res.status(404).json({ error: "not found" });
 
+    // Read + write happen in one tx under a row lock so this can't race a
+    // live queue claim: an agent's claimNextWorkItem/extendLease/sweep run
+    // between a separate SELECT and UPDATE would otherwise let a human PATCH
+    // clobber status while claimed_by/lease still point at the agent. The
+    // guard on the UPDATE itself (not just the zod enum) is what actually
+    // protects a live claim — status could flip to claimed/in_progress after
+    // our SELECT but before our UPDATE without it.
     const client = await deps.servicePool.connect();
     try {
       await client.query("begin");
+      const locked = await client.query(
+        "select organisation_id, status from work_items where id = $1 and project_id = $2 for update",
+        [req.params.itemId, req.params.id]);
+      const item = locked.rows[0] ?? null;
+      if (item === null) { await client.query("rollback"); return res.status(404).json({ error: "not found" }); }
       const updated = await client.query(
-        "update work_items set status = $2, updated_at = now() where id = $1 returning id, status",
+        `update work_items set status = $2, updated_at = now()
+         where id = $1 and status not in ('claimed', 'in_progress') returning id, status`,
         [req.params.itemId, parsed.data.status]);
+      if (updated.rowCount === 0) {
+        await client.query("rollback");
+        return res.status(409).json({ error: "item is being worked by an agent" });
+      }
       await appendEvent(client, {
         organisation_id: item.organisation_id, project_id: req.params.id, work_item_id: req.params.itemId,
         type: "work.status_changed", payload: { from: item.status, to: parsed.data.status },
