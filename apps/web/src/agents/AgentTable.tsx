@@ -86,7 +86,7 @@ export function AgentTable({ agents, onAction }: {
         <div className="empty"><span className="empty__title">No agents connected</span><span>Agents report in over MCP and appear here live.</span></div>
       )}
       {rows.length > 0 && (
-      <div className="card" style={{ overflowX: "auto" }}>
+      <div className="card table-scroll">
       <table>
         <thead>
           <tr>

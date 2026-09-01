@@ -60,7 +60,7 @@ export function VoiceDock({ onCreate }: { onCreate(title: string): Promise<void>
   return (
     <div style={{ position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", zIndex: "var(--z-toast)" as unknown as number }}>
       {open ? (
-        <div className="glass" style={{ width: 480, border: "1px solid var(--line2)", borderRadius: "var(--r-lg)", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className="glass" style={{ width: "min(480px, calc(100vw - 32px))", border: "1px solid var(--line2)", borderRadius: "var(--r-lg)", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
           <div className="row gap-2">
             <span className="status-dot" style={{ margin: 0, background: "var(--acc)", animation: "pulse 1.4s ease infinite" }} />
             <span style={{ fontSize: 13, fontWeight: 650 }}>Foreman Voice</span>

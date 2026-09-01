@@ -52,7 +52,7 @@ export function LifecycleTab({ endpoints, gaps, onScan, scanning = false }: {
       {endpoints.length === 0 ? (
         <div className="empty"><span className="empty__title">No endpoints discovered</span><span>Run a scan to map the repo's lifecycle.</span></div>
       ) : (
-      <div className="card" style={{ overflowX: "auto" }}>
+      <div className="card table-scroll">
       <table>
         <thead>
           <tr>
