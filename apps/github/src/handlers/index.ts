@@ -42,15 +42,15 @@ export async function handleSyncJob(
       return;
     }
     case "foreman.create_item": {
-      if (ctx.backbone === undefined) { console.warn("create_item skipped: no backbone wired"); return; }
+      if (ctx.backbone === undefined) throw new Error("create_item handler not wired");
       return handleCreateItem(job, ctx.backbone);
     }
     case "foreman.report_run": {
-      if (ctx.backbone === undefined) { console.warn("report_run skipped: no backbone wired"); return; }
+      if (ctx.backbone === undefined) throw new Error("report_run handler not wired");
       return handleReportRun(job, ctx.backbone);
     }
     case "foreman.schedule_write": {
-      if (ctx.backbone === undefined) { console.warn("schedule_write skipped: no backbone wired"); return; }
+      if (ctx.backbone === undefined) throw new Error("schedule_write handler not wired");
       return handleScheduleWrite(job, ctx.backbone);
     }
     case "foreman.reconcile": {

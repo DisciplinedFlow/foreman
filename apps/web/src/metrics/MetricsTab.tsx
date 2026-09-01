@@ -10,6 +10,22 @@ export interface Metrics {
   lease_expiries_7d: number;
 }
 
+export interface Activity {
+  weeks: number;
+  cells: number[];
+  source: "merged" | "completed";
+}
+
+const EMPTY_ACTIVITY: Activity = { weeks: 12, cells: new Array(84).fill(0), source: "completed" };
+
+// opacity = count>0 ? clamp(0.12 + 0.88*count/max, ..1) : 0.06 (faint-but-visible
+// empty cells, full range for the rest, scaled to the busiest day in the window).
+const cellOpacity = (count: number, max: number): number => {
+  if (count <= 0) return 0.06;
+  if (max <= 0) return 0.12;
+  return Math.min(1, 0.12 + 0.88 * (count / max));
+};
+
 const fmtMs = (ms: number): string =>
   ms < 60_000 ? `${(ms / 1000).toFixed(0)}s` : `${(ms / 60_000).toFixed(1)}m`;
 
@@ -56,8 +72,9 @@ function Tile({ label, value, sub, pill }: {
 }
 
 // PRD §1.7 — the numbers a design partner is judged on, from day one.
-export function MetricsTab({ metrics: m }: { metrics: Metrics }) {
+export function MetricsTab({ metrics: m, activity = EMPTY_ACTIVITY }: { metrics: Metrics; activity?: Activity }) {
   const delta = m.supervised_throughput.this_week - m.supervised_throughput.last_week;
+  const maxCell = Math.max(0, ...activity.cells);
   const heroNum = useCountUp(m.supervised_throughput.this_week);
   const costDelta = Number(m.cost_7d.usd) - Number(m.cost_7d.previous_usd);
   const prev = Number(m.cost_7d.previous_usd);
@@ -115,14 +132,15 @@ export function MetricsTab({ metrics: m }: { metrics: Metrics }) {
           sub={`prev $${m.cost_7d.previous_usd}`} />
         <Tile label="Lease expiries (7d)" value={String(m.lease_expiries_7d)} />
 
-        {/* Merge-activity heatmap — 12 weeks × 7 days. Fills in as event history
-            accrues; renders faint until then rather than inventing counts. */}
+        {/* Activity heatmap — 12 weeks × 7 days, oldest→newest. Merged PRs for
+            GitHub-connected projects, completions otherwise. Fills in as event
+            history accrues; renders faint until then rather than inventing counts. */}
         <div className="stat">
-          <div className="stat__label">Merge activity (12w)</div>
+          <div className="stat__label">{activity.source === "merged" ? "Merge activity (12w)" : "Completion activity (12w)"}</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 3, marginTop: 14 }}>
-            {Array.from({ length: 84 }).map((_, i) => (
-              <div key={i} style={{ aspectRatio: "1", borderRadius: 3, background: "var(--acc)", opacity: 0.06,
-                animation: "fadeIn 0.5s ease both", animationDelay: `${i * 10}ms` }} />
+            {activity.cells.map((count, i) => (
+              <div key={i} title={`${count}`} style={{ aspectRatio: "1", borderRadius: 3, background: "var(--acc)",
+                opacity: cellOpacity(count, maxCell), animation: "fadeIn 0.5s ease both", animationDelay: `${i * 10}ms` }} />
             ))}
           </div>
         </div>

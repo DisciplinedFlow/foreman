@@ -27,13 +27,20 @@ function parseCookie(header: string | undefined, name: string): string | undefin
   return undefined;
 }
 
+// Express 4 does not forward a rejected promise from an async handler to
+// error middleware on its own — an unwrapped throw here becomes an
+// unhandledRejection that crashes the process instead of returning a 500.
+// Mirrors apps/api/src/routes.ts's wrap().
+const wrap = (fn: express.RequestHandler): express.RequestHandler =>
+  (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
 export function createApp(deps: ApiDeps): express.Express {
   const app = express();
   app.use(express.json());
 
   if (deps.devAuth) {
     // Deviation 1: env-gated dev login; real IdP is a control-plane concern.
-    app.post("/auth/dev-login", async (req, res) => {
+    app.post("/auth/dev-login", wrap(async (req, res) => {
       const email = typeof req.body?.email === "string" ? req.body.email : null;
       if (email === null) return res.status(400).json({ error: "email required" });
       const user = await deps.servicePool.query("select id from users where email = $1", [email]);
@@ -47,7 +54,7 @@ export function createApp(deps: ApiDeps): express.Express {
         `${CSRF_COOKIE}=${csrf}; SameSite=Lax; Path=/${secure}`,
       ]);
       return res.json({ user_id: userId, csrf_token: csrf });
-    });
+    }));
   }
 
   const requireUser: express.RequestHandler = (req, res, next) => {
@@ -63,6 +70,13 @@ export function createApp(deps: ApiDeps): express.Express {
   mountRoutes(api, deps);
   mountStream(api, deps);
   app.use("/api", api);
+
+  // Catch-all: every other path returns JSON on error, but this is the
+  // backstop so a future path can never leak Express's default HTML 500.
+  app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error("api request failed", err);
+    res.status(500).json({ error: "internal" });
+  });
 
   return app;
 }

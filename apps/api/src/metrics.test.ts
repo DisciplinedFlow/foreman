@@ -110,6 +110,83 @@ beforeAll(async () => {
 });
 afterAll(async () => { await close(); await appPool.end(); await db.teardown(); });
 
+describe("activity series (12w x 7d, deterministic)", () => {
+  let c: Awaited<ReturnType<typeof seedOrgWithUser>>;
+  let d: Awaited<ReturnType<typeof seedOrgWithUser>>;
+  let cookieC: string;
+  let cookieD: string;
+
+  beforeAll(async () => {
+    c = await seedOrgWithUser(db.servicePool, "activity");
+    d = await seedOrgWithUser(db.servicePool, "activity-gh");
+    await db.servicePool.query("update projects set gh_installation_id = 111222 where id = $1", [d.projectId]);
+
+    const loginC = await fetch(`${url}/auth/dev-login`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "activity@test.local" }),
+    });
+    cookieC = loginC.headers.getSetCookie().map((v) => v.split(";")[0]).join("; ");
+    const loginD = await fetch(`${url}/auth/dev-login`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "activity-gh@test.local" }),
+    });
+    cookieD = loginD.headers.getSetCookie().map((v) => v.split(";")[0]).join("; ");
+
+    // Window is [now-2016h, now); day 0 = the calendar day of now-2016h (oldest),
+    // day 83 = the calendar day right before now's calendar day (newest).
+    // hoursAgo -> day index: 2013h -> 0, 1053h -> 40, 21h -> 83.
+    const evAt = (orgId: string, projectId: string, type: string, h: number) =>
+      db.servicePool.query(
+        `insert into events (organisation_id, project_id, type, payload, occurred_at, recorded_at)
+         values ($1,$2,$3,'{}',$4,$4)`,
+        [orgId, projectId, type, ago(h)]);
+
+    for (const [type, orgId, projectId] of [
+      ["work.completed", c.orgId, c.projectId],
+      ["github.pr_merged", d.orgId, d.projectId],
+    ] as const) {
+      await evAt(orgId, projectId, type, 2013); // day 0
+      await evAt(orgId, projectId, type, 2013);
+      await evAt(orgId, projectId, type, 1053); // day 40
+      await evAt(orgId, projectId, type, 21); // day 83
+      await evAt(orgId, projectId, type, 21);
+      await evAt(orgId, projectId, type, 21);
+      await evAt(orgId, projectId, type, 2); // today (excluded: partial day)
+      await evAt(orgId, projectId, type, 2040); // before window (excluded)
+    }
+    // noise: the other type of event shouldn't be counted for either project
+    await evAt(c.orgId, c.projectId, "github.pr_merged", 1053);
+    await evAt(d.orgId, d.projectId, "work.completed", 1053);
+  });
+
+  const expectedCells = () => {
+    const cells = new Array(84).fill(0);
+    cells[0] = 2; cells[40] = 1; cells[83] = 3;
+    return cells;
+  };
+
+  it("counts work.completed per day for non-GitHub-connected projects", async () => {
+    const res = await fetch(`${url}/api/projects/${c.projectId}/metrics/activity?now=${encodeURIComponent(NOW)}`,
+      { headers: { cookie: cookieC } });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ weeks: 12, cells: expectedCells(), source: "completed" });
+  });
+
+  it("counts github.pr_merged per day for GitHub-connected projects", async () => {
+    const res = await fetch(`${url}/api/projects/${d.projectId}/metrics/activity?now=${encodeURIComponent(NOW)}`,
+      { headers: { cookie: cookieD } });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ weeks: 12, cells: expectedCells(), source: "merged" });
+  });
+
+  it("cross-org 404s", async () => {
+    const res = await fetch(`${url}/api/projects/${d.projectId}/metrics/activity`, { headers: { cookie: cookieC } });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("metrics (PRD §1.7, deterministic)", () => {
   it("returns the exact golden object for the pinned now", async () => {
     const res = await fetch(`${url}/api/projects/${a.projectId}/metrics?now=${encodeURIComponent(NOW)}`,

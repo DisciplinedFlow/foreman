@@ -55,8 +55,13 @@ describe("WL-6 manifest flow", () => {
     const raw = match?.[1];
     expect(raw).toBeDefined();
     const manifest = JSON.parse(raw!.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&amp;/g, "&"));
-    // Task-1 handler + Task-2 merged-and-reviewed metric depend on this delivery.
-    for (const event of ["issues", "pull_request", "pull_request_review", "projects_v2_item"]) {
+    // Every webhook event apps/github/src/handlers/index.ts routes must be requested
+    // here, or GitHub will simply never deliver it. Keep this list in sync with the
+    // dispatcher's case statements.
+    for (const event of [
+      "issues", "pull_request", "pull_request_review", "projects_v2_item",
+      "check_run", "deployment_status",
+    ]) {
       expect(manifest.default_events).toContain(event);
     }
   });
@@ -114,6 +119,38 @@ describe("WL-6 manifest flow", () => {
     const row = await db.servicePool.query("select private_key_pem from github_apps where app_id=5252");
     expect(row.rows[0].private_key_pem.startsWith("enc:v1:")).toBe(true);
     expect(openPem(row.rows[0].private_key_pem, masterKey)).toBe("-----REAL PEM-----");
+  });
+
+  it("a thrown/rejected error inside any handler reaches next(err) instead of crashing the process", async () => {
+    // Stand-in for a real DB error: a pool whose query always rejects. mountSetup's
+    // routes are wrapped so this reaches an error-handling middleware (mirrors
+    // apps/github/src/main.ts's catch-all) instead of becoming an unhandledRejection.
+    const throwingPool = { query: () => Promise.reject(new Error("boom")) } as unknown as pg.Pool;
+    const app3 = express();
+    mountSetup(app3, {
+      pool: throwingPool, secret: SECRET,
+      githubBase: "https://gh.test", apiBase: "https://api.gh.test", publicUrl: "https://foreman.test",
+    });
+    app3.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      res.status(500).json({ error: "internal" });
+    });
+    const server3 = app3.listen(0);
+    await new Promise((r) => server3.once("listening", r));
+    const url3 = `http://127.0.0.1:${(server3.address() as { port: number }).port}`;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (err: unknown) => unhandled.push(err);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const res = await fetch(`${url3}/setup/github/start?org_slug=setup-org&gh_org=acme`);
+      expect(res.status).toBe(500);
+      expect(res.headers.get("content-type")).toMatch(/application\/json/);
+      expect(await res.json()).toEqual({ error: "internal" });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      await new Promise((r) => server3.close(r));
+    }
   });
 
   it("install-callback links the installation to the org's app", async () => {

@@ -243,6 +243,64 @@ describe("api routes", () => {
     expect(e.rows[0].payload).toEqual({ from: 100, to: 5 });
   });
 
+  it("status PATCH moves queued -> blocked and appends work.status_changed; rejects queue-owned/unknown; cross-org 404s", async () => {
+    const wi = (await db.servicePool.query(
+      "insert into work_items (organisation_id, project_id, title, status) values ($1,$2,'moveable','queued') returning id",
+      [a.orgId, a.projectId])).rows[0].id;
+    const res = await fetch(`${url}/api/projects/${a.projectId}/items/${wi}/status`, {
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({ status: "blocked" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: wi, status: "blocked" });
+    expect((await db.servicePool.query("select status from work_items where id=$1", [wi])).rows[0].status).toBe("blocked");
+    const e = await db.servicePool.query(
+      "select payload from events where type='work.status_changed' and work_item_id=$1", [wi]);
+    expect(e.rows[0].payload).toEqual({ from: "queued", to: "blocked" });
+
+    const claimed = await fetch(`${url}/api/projects/${a.projectId}/items/${wi}/status`, {
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({ status: "claimed" }),
+    });
+    expect(claimed.status).toBe(400);
+
+    const unknown = await fetch(`${url}/api/projects/${a.projectId}/items/${wi}/status`, {
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({ status: "nonsense" }),
+    });
+    expect(unknown.status).toBe(400);
+
+    const bWi = (await db.servicePool.query(
+      "insert into work_items (organisation_id, project_id, title) values ($1,$2,'b item 2') returning id",
+      [b.orgId, b.projectId])).rows[0].id;
+    const forbidden = await fetch(`${url}/api/projects/${a.projectId}/items/${bWi}/status`, {
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({ status: "done" }),
+    });
+    expect(forbidden.status).toBe(404);
+  });
+
+  it("status PATCH on a claimed item -> 409, status unchanged, no event appended (queue-race guard)", async () => {
+    const ag = (await db.servicePool.query(
+      "insert into agents (organisation_id, project_id, display_name, platform) values ($1,$2,'status-race-agent','test') returning id",
+      [a.orgId, a.projectId])).rows[0].id;
+    const wi = (await db.servicePool.query(
+      `insert into work_items (organisation_id, project_id, title, status, claimed_by)
+       values ($1,$2,'claimed target','claimed',$3) returning id`, [a.orgId, a.projectId, ag])).rows[0].id;
+
+    const res = await fetch(`${url}/api/projects/${a.projectId}/items/${wi}/status`, {
+      method: "PATCH", headers: { "content-type": "application/json", ...mut() },
+      body: JSON.stringify({ status: "blocked" }),
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "item is being worked by an agent" });
+    expect((await db.servicePool.query("select status, claimed_by from work_items where id=$1", [wi])).rows[0])
+      .toMatchObject({ status: "claimed", claimed_by: ag });
+    const e = await db.servicePool.query(
+      "select 1 from events where type='work.status_changed' and work_item_id=$1", [wi]);
+    expect(e.rowCount).toBe(0);
+  });
+
   it("briefs are listed newest-first with delivery status (BRF-6)", async () => {
     const briefId = (await db.servicePool.query(
       `insert into briefs (organisation_id, project_id, window_start, window_end, content)
@@ -439,6 +497,27 @@ describe("api routes", () => {
       "select 1 from sync_jobs where event_name='foreman.lifecycle_scan'")).rowCount).toBe(1);
 
     const forbidden = await fetch(`${url}/api/projects/${b.projectId}/lifecycle/scan`, { method: "POST", headers: mut() });
+    expect(forbidden.status).toBe(404);
+  });
+
+  it("sync-jobs returns failed jobs scoped to the project's org; cross-org 404s (audit #1)", async () => {
+    const job = (over: object) => db.servicePool.query(
+      `insert into sync_jobs (organisation_id, installation_id, delivery_id, event_name, action, payload, status, attempts, last_error)
+       values ($1,0,$2,'issues',null,'{}',$3,$4,$5) returning id`,
+      [a.orgId, `sj:${Math.random()}`, (over as any).status, (over as any).attempts ?? 1, (over as any).last_error ?? null]);
+    await job({ status: "failed", attempts: 5, last_error: "boom" });
+    await job({ status: "done" });
+    await db.servicePool.query(
+      `insert into sync_jobs (organisation_id, installation_id, delivery_id, event_name, action, payload, status, attempts, last_error)
+       values ($1,0,'sj:other','issues',null,'{}','failed',5,'other org') `, [b.orgId]);
+
+    const res = await get(`/api/projects/${a.projectId}/sync-jobs?status=failed`, cookieA);
+    expect(res.status).toBe(200);
+    const { jobs } = await res.json();
+    expect(jobs.length).toBe(1);
+    expect(jobs[0]).toMatchObject({ event_name: "issues", attempts: 5, last_error: "boom" });
+
+    const forbidden = await get(`/api/projects/${b.projectId}/sync-jobs?status=failed`, cookieA);
     expect(forbidden.status).toBe(404);
   });
 

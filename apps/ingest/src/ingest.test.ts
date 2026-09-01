@@ -47,6 +47,45 @@ describe("ingest hook receiver (AGT-4)", () => {
     expect((await post(hook("SessionStart"), "fmn_agt_wrong")).status).toBe(401);
   });
 
+  it("malformed JSON body -> JSON 500, not Express's HTML default (catch-all error middleware)", async () => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: "{not json",
+    });
+    expect(res.status).toBe(500);
+    expect(res.headers.get("content-type")).toMatch(/application\/json/);
+    expect(await res.json()).toEqual({ error: "internal" });
+  });
+
+  it("a thrown/rejected error inside the async handler -> JSON 500, never crashes the process", async () => {
+    // Stand-in for a real DB error inside authenticate(): a pool whose query always rejects.
+    const throwingPool = { query: () => Promise.reject(new Error("boom")) } as unknown as pg.Pool;
+    const app = createIngestApp(throwingPool);
+    const server = app.listen(0);
+    await new Promise((r) => server.once("listening", r));
+    const throwUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}/ingest/hook`;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (err: unknown) => unhandled.push(err);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const res = await fetch(throwUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer whatever" },
+        body: JSON.stringify(hook("SessionStart")),
+      });
+      expect(res.status).toBe(500);
+      expect(res.headers.get("content-type")).toMatch(/application\/json/);
+      expect(await res.json()).toEqual({ error: "internal" });
+      // give any stray unhandledRejection a tick to surface before asserting none did
+      await new Promise((r) => setTimeout(r, 10));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      await new Promise((r) => server.close(r));
+    }
+  });
+
   it("SessionStart creates a telemetry agent, opens a run, appends agent.announced", async () => {
     const res = await post(hook("SessionStart"));
     expect(res.status).toBe(200);

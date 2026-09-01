@@ -1,5 +1,6 @@
 import pg from "pg";
 import { sweepExpiredLeases, enqueueReconcileJobs } from "@foreman/db";
+import { reapStuckSyncJobs } from "foreman-github/lib";
 import { detectStalls } from "./stall.js";
 import { watchPush } from "./push.js";
 import { generateBrief, briefDue, deliverBrief, mailerFromEnv, regenerateOverview, llmFromEnv } from "foreman-gen/lib";
@@ -21,6 +22,17 @@ if (RECONCILE_SEC > 0) {
       .then(n => n && console.log(`enqueued ${n} reconcile jobs`))
       .catch(err => console.error("reconcile enqueue failed", err));
   }, RECONCILE_SEC * 1000);
+}
+
+// Audit #1: a worker crash mid-job leaves sync_jobs stuck 'running' with a
+// stale locked_at forever — reap those back to 'queued' periodically. 0 disables.
+const REAP_SEC = Number(process.env.FOREMAN_REAP_INTERVAL_SEC ?? 60);
+if (REAP_SEC > 0) {
+  setInterval(() => {
+    reapStuckSyncJobs(pool)
+      .then(n => n && console.log(`reaped ${n} stuck sync jobs`))
+      .catch(err => console.error("reap failed", err));
+  }, REAP_SEC * 1000);
 }
 
 // BRF-1: tick every minute; a project's brief fires when briefDue says so in

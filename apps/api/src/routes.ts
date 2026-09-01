@@ -36,6 +36,8 @@ const newItemBody = z.object({
   acceptance: z.array(z.string()).optional(),
 }).strict();
 
+const syncJobStatuses = new Set(["queued", "running", "done", "failed"]);
+
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const schedulePatch = z.object({
   start_at: dateStr.optional(),
@@ -308,6 +310,61 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
     }
   }));
 
+  // Board drag-and-drop: only the human-meaningful statuses are settable by
+  // hand. claimed/in_progress are queue-owned (the worker sets them on
+  // claim/lease) — hand-setting either would corrupt the claim.
+  const statusBody = z.object({
+    status: z.enum(["queued", "blocked", "in_review", "done", "cancelled"]),
+  }).strict();
+
+  api.patch("/projects/:id/items/:itemId/status", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const parsed = statusBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid" });
+
+    const visible = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        "select 1 from work_items where id = $1 and project_id = $2",
+        [req.params.itemId, req.params.id])).rowCount !== 0);
+    if (!visible) return res.status(404).json({ error: "not found" });
+
+    // Read + write happen in one tx under a row lock so this can't race a
+    // live queue claim: an agent's claimNextWorkItem/extendLease/sweep run
+    // between a separate SELECT and UPDATE would otherwise let a human PATCH
+    // clobber status while claimed_by/lease still point at the agent. The
+    // guard on the UPDATE itself (not just the zod enum) is what actually
+    // protects a live claim — status could flip to claimed/in_progress after
+    // our SELECT but before our UPDATE without it.
+    const client = await deps.servicePool.connect();
+    try {
+      await client.query("begin");
+      const locked = await client.query(
+        "select organisation_id, status from work_items where id = $1 and project_id = $2 for update",
+        [req.params.itemId, req.params.id]);
+      const item = locked.rows[0] ?? null;
+      if (item === null) { await client.query("rollback"); return res.status(404).json({ error: "not found" }); }
+      const updated = await client.query(
+        `update work_items set status = $2, updated_at = now()
+         where id = $1 and status not in ('claimed', 'in_progress') returning id, status`,
+        [req.params.itemId, parsed.data.status]);
+      if (updated.rowCount === 0) {
+        await client.query("rollback");
+        return res.status(409).json({ error: "item is being worked by an agent" });
+      }
+      await appendEvent(client, {
+        organisation_id: item.organisation_id, project_id: req.params.id, work_item_id: req.params.itemId,
+        type: "work.status_changed", payload: { from: item.status, to: parsed.data.status },
+      });
+      await client.query("commit");
+      return res.json(updated.rows[0]);
+    } catch (err) {
+      await client.query("rollback").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }));
+
   api.get("/projects/:id/checkpoints", wrap(async (req, res) => {
     const { userId } = req as AuthedRequest;
     const checkpoints = await withUser(deps.appPool, userId, async (tx) =>
@@ -477,6 +534,25 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
     return res.status(202).json({ queued: true });
   }));
 
+  // Audit #1 observability: sync_jobs has no project_id, so scope the read by
+  // the project's organisation_id (RLS on `projects` already gated visibility above).
+  api.get("/projects/:id/sync-jobs", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const proj = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query("select organisation_id from projects where id = $1", [req.params.id])).rows[0] ?? null);
+    if (proj === null) return res.status(404).json({ error: "not found" });
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    if (status !== undefined && !syncJobStatuses.has(status)) {
+      return res.status(400).json({ error: "invalid status" });
+    }
+    const jobs = await deps.servicePool.query(
+      `select id, event_name, action, attempts, last_error, created_at from sync_jobs
+       where organisation_id = $1 ${status !== undefined ? "and status = $2" : ""}
+       order by id desc`,
+      status !== undefined ? [proj.organisation_id, status] : [proj.organisation_id]);
+    res.json({ jobs: jobs.rows });
+  }));
+
   // PRD §1.7 — deterministic reads over the event log; `now` is caller-suppliable
   // so the numbers are reproducible (BRF-7 spirit).
   // Memo lesson 4: your events, your Postgres. The whole project log, id-ordered.
@@ -595,6 +671,45 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
         cost_7d: { usd: Number(cost.rows[0].usd).toFixed(2), previous_usd: Number(cost.rows[0].previous).toFixed(2) },
         lease_expiries_7d: leases.rows[0].n,
       };
+    });
+    if (body === null) return res.status(404).json({ error: "not found" });
+    return res.json(body);
+  }));
+
+  // Weekly merge-activity series for the Metrics heatmap: 12 weeks x 7 days,
+  // oldest->newest, day-bucketed on `now`. GitHub-connected projects count
+  // merged PRs (the real supervised-throughput signal); others fall back to
+  // work.completed so the heatmap isn't empty pre-GitHub-connection.
+  api.get("/projects/:id/metrics/activity", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const nowParam = typeof req.query.now === "string" ? Date.parse(req.query.now) : NaN;
+    const now = Number.isNaN(nowParam) ? new Date() : new Date(nowParam);
+    const WEEKS = 12;
+    const DAYS = WEEKS * 7;
+    const windowStart = new Date(now.getTime() - DAYS * 86400_000);
+
+    const body = await withUser(deps.appPool, userId, async (tx) => {
+      const proj = await tx.query("select gh_installation_id from projects where id = $1", [req.params.id]);
+      if (proj.rowCount === 0) return null;
+      const ghConnected = proj.rows[0].gh_installation_id !== null;
+      const type = ghConnected ? "github.pr_merged" : "work.completed";
+
+      const rows = await tx.query(
+        `select date_trunc('day', occurred_at at time zone 'UTC') at time zone 'UTC' as bucket,
+                count(*)::int as n
+         from events where project_id = $1 and type = $2
+           and occurred_at >= $3 and occurred_at < $4
+         group by 1`,
+        [req.params.id, type, windowStart, now]);
+
+      const dayTrunc = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+      const windowStartDay = dayTrunc(windowStart);
+      const cells = new Array(DAYS).fill(0) as number[];
+      for (const r of rows.rows) {
+        const idx = Math.round((dayTrunc(new Date(r.bucket)) - windowStartDay) / 86400_000);
+        if (idx >= 0 && idx < DAYS) cells[idx] = r.n;
+      }
+      return { weeks: WEEKS, cells, source: ghConnected ? "merged" : "completed" };
     });
     if (body === null) return res.status(404).json({ error: "not found" });
     return res.json(body);
