@@ -30,6 +30,7 @@ foreman-github ─┘                                   │
 | foreman-projector | `apps/projector` | — | Event log → projections (critical path, health) |
 | foreman-gen | `apps/gen` | — | Brief assembly/delivery + living overview (library; crons run in scheduler) |
 | web UI | `apps/web` | 5173 | React: Gantt, Agents, Graph, Overview, Lifecycle |
+| foreman-control | `apps/control` | 3006 | Provisioning + usage metering; the only service holding `foreman_control` (WL-8) |
 
 Packages: `@foreman/events` (schema registry), `@foreman/db` (migrations, RLS, queue),
 `@foreman/github-client` (REST/GraphQL, rate budget, echo cache), `@foreman/backbone`
@@ -56,7 +57,9 @@ pnpm --filter foreman-mcp test:load  # §10 load harness (100 agents, 2,000 item
 | `DATABASE_URL` | `postgres://foreman_service:foreman_service@localhost:5433/foreman` (mcp: **required**) | all services |
 | `DATABASE_URL_APP` | `postgres://foreman_app:foreman_app@localhost:5433/foreman` | api (RLS role) |
 | `DATABASE_URL_ADMIN` | `postgres://postgres:postgres@localhost:5433/postgres` | db:migrate |
-| `PORT` / `FOREMAN_API_PORT` / `FOREMAN_GITHUB_PORT` / `FOREMAN_INGEST_PORT` | 8811 / 3003 / 3002 / 3004 | mcp / api / github / ingest |
+| `PORT` / `FOREMAN_API_PORT` / `FOREMAN_GITHUB_PORT` / `FOREMAN_INGEST_PORT` / `FOREMAN_CONTROL_PORT` | 8811 / 3003 / 3002 / 3004 / 3006 | mcp / api / github / ingest / control |
+| `FOREMAN_CONTROL_DATABASE_URL` | `postgres://foreman_control:foreman_control@localhost:5433/foreman` | control (provisioning role, unreachable from the app plane — WL-8) |
+| `FOREMAN_CONTROL_TOKEN` | unset (**required**) | control bearer auth |
 | `FOREMAN_SESSION_SECRET` | `dev-only-secret` | api cookies, github setup state |
 | `FOREMAN_PUBLIC_URL` | `http://localhost:3002` | github manifest flow |
 | `REDIS_URL` | unset (in-memory Kv) | github worker echo/rate caches |

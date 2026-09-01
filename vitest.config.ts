@@ -11,7 +11,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   test: {
     projects: [
-      "apps/api", "apps/gen", "apps/github", "apps/ingest", "apps/mcp", "apps/projector", "apps/scheduler", "apps/web",
+      "apps/api", "apps/control", "apps/gen", "apps/github", "apps/ingest", "apps/mcp", "apps/projector", "apps/scheduler", "apps/web",
       "packages/backbone", "packages/db", "packages/events", "packages/github-client",
       "integrations/claude-code-plugin", "integrations/agent-sdk",
     ].map((p) => join(root, p)),
