@@ -122,6 +122,15 @@ describe("googleProvider", () => {
   it("throws a clear error when GOOGLE_API_KEY is missing", () => {
     expect(() => googleProvider("gemini-2.5-pro", {})).toThrow(/GOOGLE_API_KEY/);
   });
+
+  it("percent-encodes a key containing URL-special characters in the query string", async () => {
+    const calls = stubFetch({ candidates: [{ content: { parts: [{ text: "ok" }] } }] });
+    const p = googleProvider("gemini-2.5-pro", { GOOGLE_API_KEY: "gk/test+value=1&x" });
+    await p.complete("s", "u");
+    expect(calls[0]!.url).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
+      + "?key=gk%2Ftest%2Bvalue%3D1%26x");
+  });
 });
 
 describe("providerFromEnv", () => {

@@ -81,7 +81,8 @@ export function googleProvider(model: string, env: Env = process.env): Provider 
   return {
     name: "google",
     async complete(system, user) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
+        + `?key=${encodeURIComponent(key)}`;
       const data = await postJson(url, {}, {
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: "user", parts: [{ text: user }] }],
