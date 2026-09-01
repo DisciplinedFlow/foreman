@@ -175,11 +175,20 @@ Two silent-fallback gaps from the Phase 9 audit are now loud instead of quiet:
   `FOREMAN_DEV_AUTH === "1"` (default off, opt-in), independent of `NODE_ENV`; the route simply
   isn't registered when the flag is off, so a request to it 404s like any other unknown path.
   `docs/quickstart.md` sets `FOREMAN_DEV_AUTH=1` explicitly for local dev.
-- **Catch-all JSON error middleware.** `apps/api`, `apps/mcp`, `apps/ingest`, and `apps/github`
-  each mount a 4-arg Express error handler after every route (mirroring the pattern already in
-  `apps/control/src/http.ts`): it logs server-side and always responds `500 {"error":"internal"}`,
-  so a thrown error or malformed request body can never leak Express's default HTML 500 page or
-  a stack trace to the client.
+- **Catch-all JSON error middleware, and async handlers wrapped so it actually fires.**
+  `apps/api`, `apps/mcp`, `apps/ingest`, and `apps/github` each mount a 4-arg Express error
+  handler after every route (mirroring the pattern already in `apps/control/src/http.ts`): it
+  logs server-side and always responds `500 {"error":"internal"}`. That alone only catches
+  synchronous throws (e.g. `express.json()`'s body-parser rejecting on malformed JSON) — Express
+  4 does **not** forward a rejected promise from an `async` route handler to error middleware on
+  its own, so an unwrapped `async (req, res) => { await ... }` handler that throws becomes an
+  unhandled promise rejection that crashes the whole process instead of returning a 500. Every
+  handler that awaits a DB call or external request (`POST /mcp`, `POST /ingest/hook`,
+  `POST /auth/dev-login`, and all three `/setup/github/*` manifest routes) is wrapped with a
+  `wrap()` helper (`Promise.resolve(fn(req,res,next)).catch(next)`, the same pattern already used
+  throughout `apps/api/src/routes.ts`) so a thrown or rejected error reaches `next(err)` and the
+  catch-all above returns JSON — never a stack trace, an HTML page, or a process crash — for both
+  a malformed request body **and** a thrown error inside an async handler.
 
 ### Documented deferrals (explicitly not in this phase)
 

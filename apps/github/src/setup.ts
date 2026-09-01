@@ -37,12 +37,19 @@ export interface SetupOpts {
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 
+// Express 4 does not forward a rejected promise from an async handler to
+// error middleware on its own — an unwrapped throw here becomes an
+// unhandledRejection that crashes the process instead of returning a 500.
+// Mirrors apps/api/src/routes.ts's wrap().
+const wrap = (fn: express.RequestHandler): express.RequestHandler =>
+  (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
 export function mountSetup(app: express.Express, opts: SetupOpts): void {
   const githubBase = opts.githubBase ?? "https://github.com";
   const apiBase = opts.apiBase ?? "https://api.github.com";
   const f = opts.fetchImpl ?? fetch;
 
-  app.get("/setup/github/start", async (req, res) => {
+  app.get("/setup/github/start", wrap(async (req, res) => {
     const orgSlug = String(req.query.org_slug ?? "");
     const ghOrg = String(req.query.gh_org ?? "");
     if (orgSlug === "" || ghOrg === "") return res.status(400).send("org_slug and gh_org required");
@@ -75,9 +82,9 @@ export function mountSetup(app: express.Express, opts: SetupOpts): void {
   <input type="hidden" name="manifest" value="${esc(JSON.stringify(manifest))}">
   <button type="submit">Create GitHub App</button>
 </form>`);
-  });
+  }));
 
-  app.get("/setup/github/callback", async (req, res) => {
+  app.get("/setup/github/callback", wrap(async (req, res) => {
     const orgId = verifyState(typeof req.query.state === "string" ? req.query.state : undefined, opts.secret);
     if (orgId === null) return res.status(401).send("bad state");
     const code = String(req.query.code ?? "");
@@ -103,9 +110,9 @@ export function mountSetup(app: express.Express, opts: SetupOpts): void {
 
     const state = typeof req.query.state === "string" ? req.query.state : "";
     res.redirect(302, `${githubBase}/apps/${body.slug}/installations/new?state=${encodeURIComponent(state)}`);
-  });
+  }));
 
-  app.get("/setup/github/install-callback", async (req, res) => {
+  app.get("/setup/github/install-callback", wrap(async (req, res) => {
     const orgId = verifyState(typeof req.query.state === "string" ? req.query.state : undefined, opts.secret);
     if (orgId === null) return res.status(401).send("bad state");
     const installationId = Number(req.query.installation_id);
@@ -122,5 +129,5 @@ export function mountSetup(app: express.Express, opts: SetupOpts): void {
          organisation_id = excluded.organisation_id`,
       [installationId, appRow.rows[0].app_id, orgId]);
     res.status(200).send("<!doctype html><title>Foreman</title><h1>GitHub App installed — you can close this tab.</h1>");
-  });
+  }));
 }

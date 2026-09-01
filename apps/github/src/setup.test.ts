@@ -121,6 +121,38 @@ describe("WL-6 manifest flow", () => {
     expect(openPem(row.rows[0].private_key_pem, masterKey)).toBe("-----REAL PEM-----");
   });
 
+  it("a thrown/rejected error inside any handler reaches next(err) instead of crashing the process", async () => {
+    // Stand-in for a real DB error: a pool whose query always rejects. mountSetup's
+    // routes are wrapped so this reaches an error-handling middleware (mirrors
+    // apps/github/src/main.ts's catch-all) instead of becoming an unhandledRejection.
+    const throwingPool = { query: () => Promise.reject(new Error("boom")) } as unknown as pg.Pool;
+    const app3 = express();
+    mountSetup(app3, {
+      pool: throwingPool, secret: SECRET,
+      githubBase: "https://gh.test", apiBase: "https://api.gh.test", publicUrl: "https://foreman.test",
+    });
+    app3.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      res.status(500).json({ error: "internal" });
+    });
+    const server3 = app3.listen(0);
+    await new Promise((r) => server3.once("listening", r));
+    const url3 = `http://127.0.0.1:${(server3.address() as { port: number }).port}`;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (err: unknown) => unhandled.push(err);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const res = await fetch(`${url3}/setup/github/start?org_slug=setup-org&gh_org=acme`);
+      expect(res.status).toBe(500);
+      expect(res.headers.get("content-type")).toMatch(/application\/json/);
+      expect(await res.json()).toEqual({ error: "internal" });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      await new Promise((r) => server3.close(r));
+    }
+  });
+
   it("install-callback links the installation to the org's app", async () => {
     const state = signState(orgId, SECRET);
     const res = await fetch(`${url}/setup/github/install-callback?installation_id=9977&state=${encodeURIComponent(state)}`);
