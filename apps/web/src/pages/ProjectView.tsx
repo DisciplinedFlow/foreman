@@ -8,7 +8,7 @@ import { CommGraph, type CommNode, type CommEdge } from "../graph/CommGraph.js";
 import { OverviewTab, type OverviewSection, type OverviewRevision } from "../overview/OverviewTab.js";
 import { LifecycleTab, type EndpointRow, type LifecycleGaps } from "../lifecycle/LifecycleTab.js";
 import { SettingsTab, type ProjectSettings, type InstallationRow, type TokenRow } from "../settings/SettingsTab.js";
-import { MetricsTab, type Metrics } from "../metrics/MetricsTab.js";
+import { MetricsTab, type Metrics, type Activity } from "../metrics/MetricsTab.js";
 import { Gantt } from "../gantt/Gantt.js";
 import { mergeSchedule, type GanttItem } from "../gantt/layout.js";
 import { Board } from "../board/Board.js";
@@ -31,6 +31,7 @@ export function ProjectView() {
   const [themeLabel, setThemeLabel] = useState(getTheme() === "dark" ? "Light mode" : "Dark mode");
   const [settings, setSettings] = useState<{ project: ProjectSettings; installations: InstallationRow[]; tokens: TokenRow[]; orgSlug: string } | null>(null);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [activity, setActivity] = useState<Activity | undefined>(undefined);
   const [newItemOpen, setNewItemOpen] = useState(false);
   const [newItem, setNewItem] = useState({ title: "", intent: "", kind: "task", priority: "100" });
   const [lifecycle, setLifecycle] = useState<{ endpoints: EndpointRow[]; gaps: LifecycleGaps } | null>(null);
@@ -120,6 +121,7 @@ export function ProjectView() {
   useEffect(() => {
     if (tab !== "metrics") return;
     api<Metrics>(`/api/projects/${projectId}/metrics`).then(setMetrics).catch(() => {});
+    api<Activity>(`/api/projects/${projectId}/metrics/activity`).then(setActivity).catch(() => {});
   }, [tab, projectId]);
 
   useEffect(() => {
@@ -313,7 +315,7 @@ export function ProjectView() {
               .finally(() => setTimeout(() => setScanQueued(false), 3000));
           }} />
       )}
-      {tab === "metrics" && (metrics !== null ? <MetricsTab metrics={metrics} /> : (
+      {tab === "metrics" && (metrics !== null ? <MetricsTab metrics={metrics} activity={activity} /> : (
         <div className="stat-grid" aria-busy="true">
           {Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton" style={{ height: 96 }} />)}
         </div>

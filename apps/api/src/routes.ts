@@ -676,6 +676,45 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
     return res.json(body);
   }));
 
+  // Weekly merge-activity series for the Metrics heatmap: 12 weeks x 7 days,
+  // oldest->newest, day-bucketed on `now`. GitHub-connected projects count
+  // merged PRs (the real supervised-throughput signal); others fall back to
+  // work.completed so the heatmap isn't empty pre-GitHub-connection.
+  api.get("/projects/:id/metrics/activity", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const nowParam = typeof req.query.now === "string" ? Date.parse(req.query.now) : NaN;
+    const now = Number.isNaN(nowParam) ? new Date() : new Date(nowParam);
+    const WEEKS = 12;
+    const DAYS = WEEKS * 7;
+    const windowStart = new Date(now.getTime() - DAYS * 86400_000);
+
+    const body = await withUser(deps.appPool, userId, async (tx) => {
+      const proj = await tx.query("select gh_installation_id from projects where id = $1", [req.params.id]);
+      if (proj.rowCount === 0) return null;
+      const ghConnected = proj.rows[0].gh_installation_id !== null;
+      const type = ghConnected ? "github.pr_merged" : "work.completed";
+
+      const rows = await tx.query(
+        `select date_trunc('day', occurred_at at time zone 'UTC') at time zone 'UTC' as bucket,
+                count(*)::int as n
+         from events where project_id = $1 and type = $2
+           and occurred_at >= $3 and occurred_at < $4
+         group by 1`,
+        [req.params.id, type, windowStart, now]);
+
+      const dayTrunc = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+      const windowStartDay = dayTrunc(windowStart);
+      const cells = new Array(DAYS).fill(0) as number[];
+      for (const r of rows.rows) {
+        const idx = Math.round((dayTrunc(new Date(r.bucket)) - windowStartDay) / 86400_000);
+        if (idx >= 0 && idx < DAYS) cells[idx] = r.n;
+      }
+      return { weeks: WEEKS, cells, source: ghConnected ? "merged" : "completed" };
+    });
+    if (body === null) return res.status(404).json({ error: "not found" });
+    return res.json(body);
+  }));
+
   api.get("/projects/:id/comm-graph", wrap(async (req, res) => {
     const { userId } = req as AuthedRequest;
     const graph = await withUser(deps.appPool, userId, async (tx) => {
