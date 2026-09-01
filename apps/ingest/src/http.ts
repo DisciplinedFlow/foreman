@@ -32,5 +32,12 @@ export function createIngestApp(pool: pg.Pool): express.Express {
     return res.status(200).json({});
   });
 
+  // Catch-all: every other path returns JSON on error, but this is the
+  // backstop so a future path can never leak Express's default HTML 500.
+  app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error("ingest request failed", err);
+    res.status(500).json({ error: "internal" });
+  });
+
   return app;
 }

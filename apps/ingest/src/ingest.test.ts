@@ -47,6 +47,17 @@ describe("ingest hook receiver (AGT-4)", () => {
     expect((await post(hook("SessionStart"), "fmn_agt_wrong")).status).toBe(401);
   });
 
+  it("malformed JSON body -> JSON 500, not Express's HTML default (catch-all error middleware)", async () => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: "{not json",
+    });
+    expect(res.status).toBe(500);
+    expect(res.headers.get("content-type")).toMatch(/application\/json/);
+    expect(await res.json()).toEqual({ error: "internal" });
+  });
+
   it("SessionStart creates a telemetry agent, opens a run, appends agent.announced", async () => {
     const res = await post(hook("SessionStart"));
     expect(res.status).toBe(200);

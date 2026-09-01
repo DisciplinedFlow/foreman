@@ -27,7 +27,7 @@ safe and mints a fresh token each time.
 Each service is a separate process; run the ones you need in separate terminals:
 
 ```bash
-pnpm --filter foreman-api start                          # :3003 — BFF for the UI
+FOREMAN_DEV_AUTH=1 pnpm --filter foreman-api start       # :3003 — BFF for the UI (dev-login opt-in, audit C3)
 pnpm --filter foreman-web dev                            # :5173 — the UI (proxies /api + /auth to :3003)
 pnpm --filter foreman-ingest start                       # :3004 — Claude Code hook receiver
 DATABASE_URL="postgres://foreman_service:foreman_service@localhost:5433/foreman" pnpm --filter foreman-mcp start   # :8811 — MCP server (DATABASE_URL required)
@@ -36,11 +36,15 @@ pnpm --filter foreman-projector start                    # critical-path project
 pnpm --filter foreman-github start                       # :3002 — only needed for GitHub sync
 ```
 
-> PowerShell equivalent for the env var: `$env:DATABASE_URL = "postgres://foreman_service:foreman_service@localhost:5433/foreman"; pnpm --filter foreman-mcp start`
+> PowerShell equivalents: `$env:FOREMAN_DEV_AUTH = "1"; pnpm --filter foreman-api start` and
+> `$env:DATABASE_URL = "postgres://foreman_service:foreman_service@localhost:5433/foreman"; pnpm --filter foreman-mcp start`
 
 Open http://localhost:5173, log in with **dev@localhost** (dev-login; no password), and open
 **dev-project**. The Gantt/Agents/Graph/Overview/Lifecycle tabs are all live — empty until agents
 and items exist.
+
+> `FOREMAN_DEV_AUTH=1` mounts the password-less `/auth/dev-login` endpoint — local dev only.
+> It defaults off (audit C3); never set it against a production `foreman-api`.
 
 ## 3. First agent (ten-second path: passive telemetry)
 

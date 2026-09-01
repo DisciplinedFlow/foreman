@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type express from "express";
 import pg from "pg";
 import { createClient } from "redis";
 import { InMemoryKv, RedisKv, EchoCache, GithubClient, InstallationTokenSource, type Kv } from "@foreman/github-client";
@@ -8,6 +9,7 @@ import { handleSyncJob, type HandlerContext } from "./handlers/index.js";
 import { GithubBackbone } from "./backbone.js";
 import { mountSetup } from "./setup.js";
 import { openPem, resolveMasterKey } from "./crypto.js";
+import { resolveSessionSecret } from "./session-secret.js";
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL
@@ -49,10 +51,19 @@ const port = Number(process.env.FOREMAN_GITHUB_PORT ?? 3002);
 const receiver = createReceiver({ pool });
 mountSetup(receiver, {
   pool,
-  secret: process.env.FOREMAN_SESSION_SECRET ?? "dev-only-secret",
+  secret: resolveSessionSecret(),
   publicUrl: process.env.FOREMAN_PUBLIC_URL ?? `http://localhost:${port}`,
   ...(masterKey !== undefined ? { masterKey } : {}),
 });
+
+// Catch-all backstop (mirrors apps/control/src/http.ts): mounted after every
+// route above, so a handler that throws or calls next(err) never leaks
+// Express's default HTML 500.
+receiver.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("github service request failed", err);
+  res.status(500).json({ error: "internal" });
+});
+
 receiver.listen(port, () => {
   console.log(`foreman-github webhook receiver on :${port}`);
 });

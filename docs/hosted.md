@@ -156,3 +156,54 @@ theme**. Here is what each step actually is today:
 Nothing in this section should be read as more finished than it is: sections 3's two rows and
 this section's items 3-5 are the concrete list of what's left before `WL-4`, `WL-5`, and `WL-10`
 can be marked done.
+
+## 6. Fail-fast security wins (Phase 10 audit C2/C3)
+
+Two silent-fallback gaps from the Phase 9 audit are now loud instead of quiet:
+
+- **`FOREMAN_SESSION_SECRET` fail-fast (C2).** `apps/api` and `apps/github` used to fall back to
+  the literal string `"dev-only-secret"` when the env var was unset — a real, guessable secret
+  that a misconfigured production deploy could boot with and never notice. Both services now
+  call a shared-shape `resolveSessionSecret()` (`apps/api/src/session-secret.ts`,
+  `apps/github/src/session-secret.ts`): a configured secret under 32 characters, or an unset
+  one, **throws at boot when `NODE_ENV === "production"`**; outside production it falls back to
+  an insecure dev default and prints a loud `console.warn` naming exactly why. There is no
+  silent path in either direction.
+- **Dev-login opt-in (C3).** `apps/api`'s `/auth/dev-login` (a password-less login endpoint
+  meant only for local development) used to mount whenever `NODE_ENV !== "production"` — an
+  unset or misspelled `NODE_ENV` in a real deployment left it reachable. It's now gated on
+  `FOREMAN_DEV_AUTH === "1"` (default off, opt-in), independent of `NODE_ENV`; the route simply
+  isn't registered when the flag is off, so a request to it 404s like any other unknown path.
+  `docs/quickstart.md` sets `FOREMAN_DEV_AUTH=1` explicitly for local dev.
+- **Catch-all JSON error middleware.** `apps/api`, `apps/mcp`, `apps/ingest`, and `apps/github`
+  each mount a 4-arg Express error handler after every route (mirroring the pattern already in
+  `apps/control/src/http.ts`): it logs server-side and always responds `500 {"error":"internal"}`,
+  so a thrown error or malformed request body can never leak Express's default HTML 500 page or
+  a stack trace to the client.
+
+### Documented deferrals (explicitly not in this phase)
+
+Enumerated here so scope stays honest — none of these are silently assumed done:
+
+- **RBAC** — every authenticated user in an organisation currently has equal API access; no
+  role/permission model exists yet.
+- **SSRF egress validation** — outbound requests the services make (webhook URLs, GitHub API
+  base overrides, provider bases in `integrations/foreman-agent`) are not validated against
+  internal/private address ranges.
+- **Event table indexes** — the append-only event log has no indexes tuned for the query
+  patterns projections and metrics actually run yet.
+- **Scheduler advisory locks** — `apps/scheduler`'s periodic ticks (stall detection, briefs,
+  reconciliation, the sync-job reaper) assume a single instance; running two would double-fire
+  them. No `pg_advisory_lock` guard exists yet.
+- **Blocked-item lease sweep** — the lease sweeper reclaims stalled *claimed* work; a work item
+  left `blocked` indefinitely has no equivalent automatic sweep/escalation.
+- **Event `payload_version`** — the strict-zod event registry has no schema-version field per
+  event, so evolving an event's shape later has no built-in migration story.
+- **The deep `GithubBackbone` transactional split** — `GithubBackbone` still uses its own pool
+  rather than participating in the caller's transaction, so a retried sync job can in principle
+  double-create a GitHub issue. Phase 10 added the failure *surface* (last_error) and a
+  stuck-job reaper; the actual split into remote-I/O + a transactional `WorkItemWriter` is its
+  own future phase.
+
+None of the above blocks local development or the quickstart path; they matter before running
+Foreman as an internet-facing multi-tenant service beyond what §1-5 above already cover.
