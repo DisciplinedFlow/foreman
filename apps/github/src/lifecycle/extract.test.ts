@@ -187,6 +187,43 @@ end
       "GET /sessions", "GET /sessions/:id", "PATCH /sessions/:id", "POST /sessions",
     ]);
   });
+
+  it("honours the bare-symbol only: shorthand (no brackets)", () => {
+    const src = `resources :sessions, only: :create`;
+    const found = extractRails(src);
+    const keys = found.map((f) => `${f.method} ${f.path}`).sort();
+    expect(keys).toEqual(["POST /sessions"]);
+  });
+
+  it("honours the bare-symbol except: shorthand (no brackets)", () => {
+    const src = `resources :sessions, except: :destroy`;
+    const found = extractRails(src);
+    const keys = found.map((f) => `${f.method} ${f.path}`).sort();
+    expect(keys).toEqual([
+      "GET /sessions", "GET /sessions/:id", "PATCH /sessions/:id", "POST /sessions",
+    ]);
+  });
+
+  it("still recognizes a block opener when a comment trails the do", () => {
+    const src = `
+Rails.application.routes.draw do
+  resources :posts do # nested comments
+    resources :comments
+  end
+end
+`;
+    const found = extractRails(src);
+    const keys = found.map((f) => `${f.method} ${f.path}`).sort();
+    for (const k of [
+      "GET /posts/:post_id/comments",
+      "POST /posts/:post_id/comments",
+      "GET /posts/:post_id/comments/:id",
+      "PATCH /posts/:post_id/comments/:id",
+      "DELETE /posts/:post_id/comments/:id",
+    ]) {
+      expect(keys).toContain(k);
+    }
+  });
 });
 
 describe("extractSpring", () => {

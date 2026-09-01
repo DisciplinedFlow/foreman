@@ -172,14 +172,29 @@ const RAILS_ACTION_ROUTE: Record<RailsAction, { method: string; member: boolean 
 // resource names Rails scaffolding conventionally uses.
 const singularize = (name: string): string => name.endsWith("s") ? name.slice(0, -1) : name;
 
+const isRailsAction = (a: string): a is RailsAction => (RAILS_ACTIONS as readonly string[]).includes(a);
+
+// `only:`/`except:` accept either a bracketed symbol array (`only: [:a, :b]`)
+// or Rails' bare single-symbol shorthand (`only: :a`) — both are recognized.
+const RAILS_ONLY_BRACKET_RE = /\bonly:\s*\[([^\]]*)\]/;
+const RAILS_ONLY_BARE_RE = /\bonly:\s*:(\w+)\b/;
+const RAILS_EXCEPT_BRACKET_RE = /\bexcept:\s*\[([^\]]*)\]/;
+const RAILS_EXCEPT_BARE_RE = /\bexcept:\s*:(\w+)\b/;
+
 function railsActionSet(rest: string): Set<RailsAction> {
-  const only = /\bonly:\s*\[([^\]]*)\]/.exec(rest);
-  const except = /\bexcept:\s*\[([^\]]*)\]/.exec(rest);
-  const parseSymbols = (list: string): RailsAction[] =>
-    [...list.matchAll(/:(\w+)/g)].map((m) => m[1] as RailsAction).filter((a) => RAILS_ACTIONS.includes(a));
-  if (only !== null) return new Set(parseSymbols(only[1]!));
+  const parseList = (list: string): RailsAction[] =>
+    [...list.matchAll(/:(\w+)/g)].map((m) => m[1]!).filter(isRailsAction);
+
+  const onlyBracket = RAILS_ONLY_BRACKET_RE.exec(rest);
+  if (onlyBracket !== null) return new Set(parseList(onlyBracket[1]!));
+  const onlyBare = RAILS_ONLY_BARE_RE.exec(rest);
+  if (onlyBare !== null) return new Set(isRailsAction(onlyBare[1]!) ? [onlyBare[1]!] : []);
+
   const set = new Set<RailsAction>(RAILS_ACTIONS);
-  if (except !== null) for (const a of parseSymbols(except[1]!)) set.delete(a);
+  const exceptBracket = RAILS_EXCEPT_BRACKET_RE.exec(rest);
+  if (exceptBracket !== null) { for (const a of parseList(exceptBracket[1]!)) set.delete(a); return set; }
+  const exceptBare = RAILS_EXCEPT_BARE_RE.exec(rest);
+  if (exceptBare !== null && isRailsAction(exceptBare[1]!)) set.delete(exceptBare[1]!);
   return set;
 }
 
@@ -202,6 +217,11 @@ export function extractRails(content: string): Found[] {
   // depth to the level at which it was opened — so unrelated do/end blocks
   // (member/collection/namespace/etc.) nested inside don't mis-pop it, and
   // only the immediate parent (stack top) is ever used for nesting.
+  // Trailing `#`-comments are stripped before the do/end-anchor checks below
+  // (e.g. `resources :posts do # nested` must still be recognized as a block
+  // opener). Ruby string literals containing `#` on a routes line are out of
+  // scope for this simple strip.
+  const stripComment = (s: string): string => s.replace(/#.*$/, "").trim();
   let depth = 0;
   const resourceStack: Array<{ name: string; depth: number }> = [];
   for (const rawLine of content.split("\n")) {
@@ -214,7 +234,7 @@ export function extractRails(content: string): Found[] {
       const parent = resourceStack[resourceStack.length - 1];
       const parentSegment = parent !== undefined ? `${parent.name}/:${singularize(parent.name)}_id` : null;
       pushResource(name, actions, parentSegment);
-      if (/\bdo\s*$/.test(rest.trim())) {
+      if (/\bdo$/.test(stripComment(rest))) {
         depth += 1;
         resourceStack.push({ name, depth });
       }
@@ -226,8 +246,8 @@ export function extractRails(content: string): Found[] {
       push(verb[1]!.toUpperCase(), p.startsWith("/") ? p : `/${p}`);
       continue;
     }
-    if (/\bdo\s*$/.test(rawLine.trim())) { depth += 1; continue; }
-    if (/^end\s*$/.test(rawLine.trim())) {
+    if (/\bdo$/.test(stripComment(rawLine))) { depth += 1; continue; }
+    if (/^end$/.test(stripComment(rawLine))) {
       const top = resourceStack[resourceStack.length - 1];
       if (top !== undefined && top.depth === depth) resourceStack.pop();
       depth = Math.max(0, depth - 1);
