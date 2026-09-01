@@ -63,7 +63,7 @@ pnpm --filter foreman-mcp test:load  # §10 load harness (100 agents, 2,000 item
 | `FOREMAN_SESSION_SECRET` | `dev-only-secret` | api cookies, github setup state |
 | `FOREMAN_PUBLIC_URL` | `http://localhost:3002` | github manifest flow |
 | `REDIS_URL` | unset (in-memory Kv) | github worker echo/rate caches |
-| `FOREMAN_MASTER_KEY` | unset (plaintext keys) | 64-hex AES key sealing GitHub App PEMs |
+| `FOREMAN_MASTER_KEY` / `FOREMAN_MASTER_KEY_FILE` / `FOREMAN_MASTER_KEY_CMD` | unset (plaintext keys) | 64-hex AES key sealing GitHub App PEMs — env value, file path, or shell command (KMS-ready; precedence in that order, see [`docs/hosted.md`](docs/hosted.md)) |
 | `FOREMAN_SMTP_URL` / `FOREMAN_SMTP_FROM` | unset (log mailer) / `foreman@localhost` | brief email delivery |
 | `ANTHROPIC_API_KEY` / `FOREMAN_OVERVIEW_MODEL` | unset (extractive) / `claude-opus-5` | overview prose generation |
 | `SWEEP_INTERVAL_MS` | 30000 | lease sweeper |

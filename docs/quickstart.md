@@ -16,6 +16,12 @@ pnpm db:seed      # org `dev`, user dev@localhost, project `dev-project`, and an
 `db:seed` prints an `fmn_agt_…` token — copy it, you'll use it twice below. Re-running seed is
 safe and mints a fresh token each time.
 
+> `db:seed` is the only tenant-creation path in this quickstart, and it's meant to stay that way:
+> the application plane (everything below) cannot create or delete organisations — that grant was
+> revoked from it on purpose (`WL-8`). Provisioning a second tenant beyond this seeded `dev` org
+> happens through the separate control-plane service (`apps/control`, its own role and bearer
+> token) — see [`docs/hosted.md`](hosted.md) for the API and why the split exists.
+
 ## 2. Services
 
 Each service is a separate process; run the ones you need in separate terminals:
