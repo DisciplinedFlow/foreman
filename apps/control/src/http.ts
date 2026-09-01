@@ -37,5 +37,12 @@ export function createControlApp(deps: ControlDeps): express.Express {
   app.use(requireBearer(deps.token));
   mountRoutes(app, deps);
 
+  // Catch-all: every other path returns JSON on error, but this is the
+  // backstop so a future path can never leak Express's default HTML 500.
+  app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error("control-plane request failed", err);
+    res.status(500).json({ error: "internal" });
+  });
+
   return app;
 }

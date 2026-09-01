@@ -25,6 +25,7 @@ const meteringBody = z.object({
 }).strict();
 
 const isUniqueViolation = (err: unknown): boolean => (err as { code?: string } | null)?.code === "23505";
+const uuidParam = z.string().uuid();
 
 // WL-8/WL-9: this router only ever runs behind the foreman_control role, and
 // only apps/control connects that way — the app plane can't reach it (see
@@ -70,6 +71,10 @@ export function mountRoutes(app: express.Express, deps: ControlDeps): void {
   }));
 
   app.patch("/tenants/:id", wrap(async (req, res) => {
+    // A malformed id would otherwise reach Postgres as `... = 'not-a-uuid'`
+    // and raise 22P02 (invalid_text_representation) — validate up front so
+    // an unrecognisable id gets the same 404 JSON shape as an unknown one.
+    if (!uuidParam.safeParse(req.params.id).success) return res.status(404).json({ error: "not found" });
     const parsed = tenantPatch.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid" });
     const fields = Object.keys(parsed.data);
@@ -92,6 +97,7 @@ export function mountRoutes(app: express.Express, deps: ControlDeps): void {
   }));
 
   app.get("/tenants/:id/usage", wrap(async (req, res) => {
+    if (!uuidParam.safeParse(req.params.id).success) return res.status(404).json({ error: "not found" });
     const from = typeof req.query.from === "string" ? req.query.from : null;
     const to = typeof req.query.to === "string" ? req.query.to : null;
     const rows = await deps.pool.query(

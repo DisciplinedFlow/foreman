@@ -89,6 +89,20 @@ describe("control-plane provisioning (WL-8/WL-9)", () => {
     expect(res.status).toBe(404);
   });
 
+  it("PATCH malformed id -> 404 JSON, not a raw Postgres 22P02 crash", async () => {
+    const res = await call("/tenants/not-a-uuid", { method: "PATCH", body: JSON.stringify({ tier: "free" }) });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toMatch(/application\/json/);
+    expect(await res.json()).toEqual({ error: "not found" });
+  });
+
+  it("GET usage with a malformed id -> 404 JSON, not a raw Postgres 22P02 crash", async () => {
+    const res = await call("/tenants/not-a-uuid/usage");
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toMatch(/application\/json/);
+    expect(await res.json()).toEqual({ error: "not found" });
+  });
+
   it("metering run then usage GET returns the four metrics with exact counts", async () => {
     const agentId = crypto.randomUUID();
     // 2 events, 1 distinct agent, 1 completion; the owner membership from

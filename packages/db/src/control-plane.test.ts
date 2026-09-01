@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
-import { createTestDatabase } from "./testing.js";
+import { createTestDatabase, seedOrgWithUser } from "./testing.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -51,6 +51,41 @@ describe("control plane (WL-8)", () => {
           "delete from organisations where id = $1", [ins.rows[0].id]);
         expect(del.rowCount).toBe(1);
       } finally { await controlClient.end(); }
+    } finally { await db.teardown(); }
+  });
+
+  it("foreman_app cannot write usage_records but can select its own org's rows (X-4, RLS select-only policy)", async () => {
+    const db = await createTestDatabase();
+    try {
+      const { orgId, userId } = await seedOrgWithUser(db.servicePool, "usage-rls");
+      await db.servicePool.query(
+        `insert into usage_records (organisation_id, period_start, period_end, metric, value)
+         values ($1, current_date, current_date, 'seats', 1)`, [orgId]);
+
+      const appClient = new pg.Client({ connectionString: db.appUrl });
+      await appClient.connect();
+      try {
+        await appClient.query("select set_config('app.user_id', $1, false)", [userId]);
+
+        // 0002's `alter default privileges` grants foreman_app insert/update on
+        // every new table, including usage_records — the write-isolation for
+        // this table rests entirely on RLS having no policy for insert/update,
+        // not on a table-level revoke. Pin both failure modes so migration or
+        // privilege drift trips this test instead of silently reopening writes.
+        await expect(
+          appClient.query(
+            `insert into usage_records (organisation_id, period_start, period_end, metric, value)
+             values ($1, current_date, current_date, 'events_ingested', 99)`, [orgId])
+        ).rejects.toThrow(/row-level security/);
+
+        const update = await appClient.query(
+          `update usage_records set value = 999 where organisation_id = $1 and metric = 'seats'`, [orgId]);
+        expect(update.rowCount).toBe(0);
+
+        const select = await appClient.query(
+          "select metric, value from usage_records where organisation_id = $1", [orgId]);
+        expect(select.rows).toEqual([{ metric: "seats", value: "1" }]);
+      } finally { await appClient.end(); }
     } finally { await db.teardown(); }
   });
 
