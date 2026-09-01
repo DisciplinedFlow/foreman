@@ -3,7 +3,7 @@
 // library/handler code entirely).
 import { readFileSync } from "node:fs";
 import pg from "pg";
-import { sealPem, keyFromEnv } from "../src/crypto.js";
+import { sealPem, resolveMasterKey } from "../src/crypto.js";
 
 const env = (name: string): string => {
   const v = process.env[name];
@@ -12,7 +12,7 @@ const env = (name: string): string => {
 };
 
 const appId = Number(env("FOREMAN_GH_APP_ID"));
-const masterKey = keyFromEnv();
+const masterKey = await resolveMasterKey();
 const rawPem = readFileSync(env("FOREMAN_GH_PEM_PATH"), "utf8");
 const pem = masterKey !== undefined ? sealPem(rawPem, masterKey) : rawPem;
 const webhookSecret = env("FOREMAN_GH_WEBHOOK_SECRET");
