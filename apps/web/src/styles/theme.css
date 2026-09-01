@@ -1,0 +1,474 @@
+/*
+ * Foreman design system — an Apple-flavoured, theme-aware token layer.
+ * Light-first with a full dark mode driven by the OS preference. Everything
+ * (colour, type, spacing, radius, shadow, motion) is a variable so surfaces
+ * stay consistent and a re-theme is a one-file change.
+ *
+ * The type stack leads with the Apple platform UI font: on macOS / iOS this
+ * renders as SF Pro, elsewhere it falls back to the native UI font. The
+ * "feel" lives in the system as a whole — spacing, weight, hairlines,
+ * motion — not in the glyphs alone.
+ */
+
+:root {
+  /* Neutrals — a single cool-grey family, tinted consistently. */
+  --canvas:        #f5f5f7;  /* app background */
+  --surface:       #ffffff;  /* cards, panels */
+  --surface-2:     #fbfbfd;  /* inset / secondary surface */
+  --elevated:      #ffffff;  /* popovers, menus */
+  --fill:          #ececef;  /* control fills, track */
+  --fill-strong:   #e2e2e6;
+
+  --text:          #1d1d1f;  /* primary */
+  --text-2:        #6e6e73;  /* secondary */
+  --text-3:        #8e8e93;  /* tertiary / captions */
+  --on-accent:     #ffffff;
+
+  /* Hairlines — translucent so they sit on any surface. */
+  --separator:     rgba(0, 0, 0, 0.10);
+  --separator-2:   rgba(0, 0, 0, 0.06);
+
+  /* One accent. Violet (per the Insighta reference). */
+  --accent:        #6d47ff;
+  --accent-hover:  #5b39e6;
+  --accent-press:  #5433d6;
+  --accent-tint:   rgba(109, 71, 255, 0.10);
+  --accent-grad:   linear-gradient(135deg, #7c5cff 0%, #9b6bff 100%);
+
+  /* Semantic — desaturated to sit with the neutrals. */
+  --success:       #34a853;
+  --warning:       #b26a00;
+  --danger:        #e0402f;
+  --danger-tint:   rgba(224, 64, 47, 0.10);
+
+  /* Elevation — soft, cool-tinted, single light source from above. */
+  --shadow-sm: 0 1px 2px rgba(17, 24, 39, 0.06), 0 1px 1px rgba(17, 24, 39, 0.04);
+  --shadow-md: 0 4px 16px rgba(17, 24, 39, 0.08), 0 1px 3px rgba(17, 24, 39, 0.05);
+  --shadow-lg: 0 12px 40px rgba(17, 24, 39, 0.14), 0 2px 8px rgba(17, 24, 39, 0.06);
+
+  /* Radii — softer on containers, tighter inside. */
+  --r-xs: 6px;
+  --r-sm: 9px;
+  --r-md: 13px;
+  --r-lg: 20px;
+  --r-pill: 980px;
+
+  /* Spacing — 4px base. */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 24px; --sp-6: 32px; --sp-7: 48px; --sp-8: 64px;
+
+  /* Type. */
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+          "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", "Consolas", monospace;
+
+  /* Motion — Apple's standard ease and a springier one for controls. */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur: 0.22s;
+
+  /* z-index scale — no magic 9999s. */
+  --z-nav: 100;
+  --z-sticky: 200;
+  --z-popover: 300;
+  --z-toast: 400;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas:      #0c0c0f;  /* layered near-black, not pure #000 */
+    --surface:     #161619;
+    --surface-2:   #111114;
+    --elevated:    #1e1e24;
+    --fill:        #232329;
+    --fill-strong: #2e2e36;
+
+    --text:        #f5f5f7;
+    --text-2:      #a1a1a6;
+    --text-3:      #8e8e93;
+    --on-accent:   #ffffff;
+
+    --separator:   rgba(255, 255, 255, 0.12);
+    --separator-2: rgba(255, 255, 255, 0.07);
+
+    --accent:       #8b6dff;
+    --accent-hover: #9d84ff;
+    --accent-press: #7a5cf0;
+    --accent-tint:  rgba(139, 109, 255, 0.18);
+    --accent-grad:  linear-gradient(135deg, #7c5cff 0%, #a06bff 100%);
+
+    --success:     #30d158;
+    --warning:     #ffd60a;
+    --danger:      #ff453a;
+    --danger-tint: rgba(255, 69, 58, 0.18);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
+
+    color-scheme: dark;
+  }
+}
+
+/* ---- Reset / base ------------------------------------------------------- */
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.47;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--accent-tint); }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* Headings — tight tracking, confident weight, sentence case in content. */
+h1, h2, h3, h4 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+h1 { font-size: 2rem; letter-spacing: -0.03em; }
+h2 { font-size: 1.35rem; }
+h3 { font-size: 1.1rem; }
+
+p { margin: 0 0 var(--sp-3); }
+small { color: var(--text-2); }
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color var(--dur) var(--ease);
+}
+a:hover { color: var(--accent-hover); text-decoration: underline; text-underline-offset: 2px; }
+
+code, kbd, pre { font-family: var(--mono); font-size: 0.9em; }
+
+/* ---- Controls ----------------------------------------------------------- */
+
+button {
+  font: inherit;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--fill);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), transform 0.08s var(--ease),
+              box-shadow var(--dur) var(--ease), opacity var(--dur) var(--ease);
+}
+button:hover { background: var(--fill-strong); }
+button:active { transform: scale(0.97); }
+button:disabled { cursor: default; opacity: 0.5; }
+
+/* Primary action — filled Apple pill. */
+.btn-primary,
+button.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: var(--r-pill);
+  padding: 8px 18px;
+}
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:active { background: var(--accent-press); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--accent);
+}
+.btn-ghost:hover { background: var(--accent-tint); }
+
+.btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border-color: var(--separator);
+}
+.btn-danger:hover { background: var(--danger-tint); }
+
+input, select, textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--separator);
+  border-radius: var(--r-sm);
+  padding: 8px 11px;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+input::placeholder, textarea::placeholder { color: var(--text-3); }
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+label { color: var(--text-2); font-size: 0.9rem; }
+
+/* ---- Tables ------------------------------------------------------------- */
+
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+thead th {
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--separator);
+}
+tbody td { padding: 11px 12px; border-bottom: 1px solid var(--separator-2); }
+tbody tr { transition: background var(--dur) var(--ease); }
+tbody tr:hover { background: var(--surface-2); }
+
+/* ---- Layout primitives -------------------------------------------------- */
+
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+  padding-inline: var(--sp-5);
+}
+.container--narrow { max-width: 640px; }
+
+/* Frosted, sticky top bar — the Apple signature. */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-height: 54px;
+  padding: 0 var(--sp-5);
+  background: color-mix(in srgb, var(--canvas) 72%, transparent);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--separator-2);
+}
+.topbar__title { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.02em; }
+.topbar__spacer { flex: 1; }
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: 0.9rem;
+}
+.back-link:hover { color: var(--accent); text-decoration: none; }
+
+/* ---- Cards -------------------------------------------------------------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--separator-2);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+}
+.card--pad { padding: var(--sp-5); }
+
+/* ---- Segmented control (tab bar) --------------------------------------- */
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--fill);
+  border-radius: var(--r-sm);
+}
+.segmented button {
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--r-sm) - 3px);
+  padding: 6px 14px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-2);
+}
+.segmented button:hover { background: transparent; color: var(--text); }
+.segmented button:active { transform: none; }
+.segmented button[aria-selected="true"],
+.segmented button:disabled {
+  background: var(--surface);
+  color: var(--text);
+  opacity: 1;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ---- Stat tiles --------------------------------------------------------- */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: var(--sp-3);
+}
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--separator-2);
+  border-radius: var(--r-md);
+  padding: var(--sp-4);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.stat:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.stat__label { font-size: 0.78rem; color: var(--text-2); font-weight: 500; }
+.stat__value {
+  margin-top: 6px;
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.stat__sub { margin-top: 4px; font-size: 0.78rem; color: var(--text-3); }
+.delta-up { color: var(--success); }
+.delta-down { color: var(--danger); }
+
+/* ---- Badges & status --------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--r-xs);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background: var(--fill);
+  color: var(--text-2);
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: var(--text-3);
+}
+
+/* ---- Delta pills (reference: green +6% / red -4%) ---------------------- */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: var(--fill);
+  color: var(--text-2);
+}
+.pill--up { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+.pill--down { background: var(--danger-tint); color: var(--danger); }
+
+/* ---- Highlight card (reference: the violet "Insights" tile) ------------- */
+
+.highlight-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  padding: var(--sp-5);
+  color: #fff;
+  background: var(--accent-grad);
+  box-shadow: var(--shadow-md);
+}
+.highlight-card__eyebrow {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 0.75rem; font-weight: 600; opacity: 0.9;
+}
+.highlight-card__body { margin: var(--sp-3) 0 0; font-size: 1.15rem; font-weight: 500; line-height: 1.35; }
+
+/* ---- Section header (card title + optional action) ---------------------- */
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+.section-head h2, .section-head h3 { font-size: 1rem; }
+
+/* ---- Chips (provenance / evidence refs) -------------------------------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--r-xs);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  background: var(--fill);
+  color: var(--text-2);
+  border: 1px solid var(--separator-2);
+}
+
+/* ---- Empty / loading states -------------------------------------------- */
+
+.empty {
+  display: grid;
+  place-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-8) var(--sp-4);
+  text-align: center;
+  color: var(--text-2);
+}
+.empty__title { font-weight: 600; color: var(--text); }
+
+.skeleton {
+  border-radius: var(--r-sm);
+  background: linear-gradient(90deg, var(--fill) 25%, var(--fill-strong) 37%, var(--fill) 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.4s var(--ease) infinite;
+}
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+/* ---- Inline alert ------------------------------------------------------- */
+
+.alert {
+  padding: 10px 14px;
+  border-radius: var(--r-sm);
+  font-size: 0.9rem;
+  background: var(--danger-tint);
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+/* ---- Utilities ---------------------------------------------------------- */
+
+.stack { display: flex; flex-direction: column; }
+.row { display: flex; align-items: center; }
+.gap-2 { gap: var(--sp-2); } .gap-3 { gap: var(--sp-3); } .gap-4 { gap: var(--sp-4); }
+.wrap { flex-wrap: wrap; }
+.muted { color: var(--text-2); }
+.tnum { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

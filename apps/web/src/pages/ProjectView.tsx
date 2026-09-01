@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, patchSchedule, useProjectStream } from "../api.js";
 import { AgentTable, type AgentRow } from "../agents/AgentTable.js";
 import { DecisionCards, type CheckpointRow } from "../checkpoints/DecisionCards.js";
@@ -25,7 +25,7 @@ export function ProjectView() {
   const projectId = id!;
   const navigate = useNavigate();
   const [tab, setTab] = useState<"gantt" | "agents" | "graph" | "overview" | "lifecycle" | "settings" | "metrics">("gantt");
-  const [settings, setSettings] = useState<{ project: ProjectSettings; installations: InstallationRow[]; tokens: TokenRow[] } | null>(null);
+  const [settings, setSettings] = useState<{ project: ProjectSettings; installations: InstallationRow[]; tokens: TokenRow[]; orgSlug: string } | null>(null);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [newItemOpen, setNewItemOpen] = useState(false);
   const [newItem, setNewItem] = useState({ title: "", intent: "", kind: "task", priority: "100" });
@@ -105,7 +105,9 @@ export function ProjectView() {
       const orgId = (p.project as unknown as { organisation_id: string }).organisation_id;
       const inst = await api<{ installations: InstallationRow[] }>(`/api/orgs/${orgId}/installations`);
       const tok = await api<{ tokens: TokenRow[] }>(`/api/projects/${projectId}/tokens`);
-      setSettings({ project: p.project, installations: inst.installations, tokens: tok.tokens });
+      const orgs = await api<{ orgs: Array<{ id: string; slug: string }> }>(`/api/orgs`);
+      const orgSlug = orgs.orgs.find((o) => o.id === orgId)?.slug ?? "";
+      setSettings({ project: p.project, installations: inst.installations, tokens: tok.tokens, orgSlug });
     } catch { /* 401 handled by other loaders */ }
   }, [projectId]);
 
@@ -143,26 +145,31 @@ export function ProjectView() {
     }).finally(() => { void load(["checkpoints", "agents"]); });
   };
 
+  const tabs = [
+    ["gantt", "Gantt"], ["agents", "Agents"], ["graph", "Graph"], ["overview", "Overview"],
+    ["lifecycle", "Lifecycle"], ["metrics", "Metrics"], ["settings", "Settings"],
+  ] as const;
+
   return (
-    <main style={{ padding: 16 }}>
-      <h1>{name || "Project"}</h1>
-      <DecisionCards checkpoints={checkpoints} onAnswer={onCheckpointAnswer} />
-      <nav style={{ marginBottom: 12 }}>
-        <button onClick={() => setTab("gantt")} disabled={tab === "gantt"}>Gantt</button>{" "}
-        <button onClick={() => setTab("agents")} disabled={tab === "agents"}>Agents</button>{" "}
-        <button onClick={() => setTab("graph")} disabled={tab === "graph"}>Graph</button>{" "}
-        <button onClick={() => setTab("overview")} disabled={tab === "overview"}>Overview</button>{" "}
-        <button onClick={() => setTab("lifecycle")} disabled={tab === "lifecycle"}>Lifecycle</button>{" "}
-        <button onClick={() => setTab("metrics")} disabled={tab === "metrics"}>Metrics</button>{" "}
-        <button onClick={() => setTab("settings")} disabled={tab === "settings"}>Settings</button>
-      </nav>
+    <>
+      <header className="topbar">
+        <Link to="/" className="back-link"><span aria-hidden>‹</span> Projects</Link>
+        <span className="topbar__title">{name || "Project"}</span>
+      </header>
+      <main className="container" style={{ paddingBlock: "var(--sp-5)" }}>
+        <DecisionCards checkpoints={checkpoints} onAnswer={onCheckpointAnswer} />
+        <nav className="segmented" role="tablist" aria-label="Project sections" style={{ marginBottom: "var(--sp-5)" }}>
+          {tabs.map(([key, label]) => (
+            <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>
+          ))}
+        </nav>
       {tab === "gantt" && (
         <>
           <p>
-            <button onClick={() => setNewItemOpen((o) => !o)}>{newItemOpen ? "✕ Cancel" : "+ New item"}</button>
+            <button className={newItemOpen ? "btn-ghost" : "btn-primary"} onClick={() => setNewItemOpen((o) => !o)}>{newItemOpen ? "Cancel" : "+ New item"}</button>
           </p>
           {newItemOpen && (
-            <form style={{ marginBottom: 12 }} onSubmit={(e) => {
+            <form className="card card--pad row wrap gap-3" style={{ marginBottom: "var(--sp-4)", alignItems: "flex-end" }} onSubmit={(e) => {
               e.preventDefault();
               if (newItem.title.trim() === "") return;
               api(`/api/projects/${projectId}/items`, {
@@ -178,9 +185,9 @@ export function ProjectView() {
                 void load(["items", "schedule"]);
               });
             }}>
-              <label>Title <input value={newItem.title} autoFocus
+              <label>Title <input name="title" autoComplete="off" value={newItem.title} autoFocus
                 onChange={(e) => setNewItem((n) => ({ ...n, title: e.target.value }))} /></label>{" "}
-              <label>Intent <input value={newItem.intent}
+              <label>Intent <input name="intent" autoComplete="off" value={newItem.intent}
                 onChange={(e) => setNewItem((n) => ({ ...n, intent: e.target.value }))} /></label>{" "}
               <label>Kind <select value={newItem.kind}
                 onChange={(e) => setNewItem((n) => ({ ...n, kind: e.target.value }))}>
@@ -204,7 +211,7 @@ export function ProjectView() {
       )}
       {tab === "graph" && (graph !== null
         ? <CommGraph nodes={graph.nodes} edges={graph.edges} />
-        : <p>No communication data yet.</p>)}
+        : <div className="empty"><span className="empty__title">No communication yet</span><span>Agent spawns and messages will map here.</span></div>)}
       {tab === "lifecycle" && (
         <LifecycleTab
           endpoints={lifecycle?.endpoints ?? []}
@@ -216,9 +223,14 @@ export function ProjectView() {
               .finally(() => setTimeout(() => setScanQueued(false), 3000));
           }} />
       )}
-      {tab === "metrics" && (metrics !== null ? <MetricsTab metrics={metrics} /> : <p>Loading metrics…</p>)}
+      {tab === "metrics" && (metrics !== null ? <MetricsTab metrics={metrics} /> : (
+        <div className="stat-grid" aria-busy="true">
+          {Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton" style={{ height: 96 }} />)}
+        </div>
+      ))}
       {tab === "settings" && (settings !== null ? (
         <SettingsTab project={settings.project} installations={settings.installations} tokens={settings.tokens}
+          orgSlug={settings.orgSlug}
           exportUrl={`/api/projects/${projectId}/export`}
           onSave={(body) => {
             api(`/api/projects/${projectId}/settings`, {
@@ -231,7 +243,7 @@ export function ProjectView() {
           onRevokeToken={(id) => {
             api(`/api/tokens/${id}`, { method: "DELETE" }).finally(() => { void loadSettings(); });
           }} />
-      ) : <p>Loading settings…</p>)}
+      ) : <p className="muted">Loading settings…</p>)}
       {tab === "overview" && (
         <OverviewTab sections={overview} onOverride={onOverviewOverride}
           onRegenerate={onOverviewRegenerate} busy={regenBusy}
@@ -242,6 +254,7 @@ export function ProjectView() {
               .catch(() => {});
           }} />
       )}
-    </main>
+      </main>
+    </>
   );
 }

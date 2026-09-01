@@ -23,17 +23,23 @@ export function Login() {
   };
 
   return (
-    <main style={{ maxWidth: 360, margin: "10vh auto", padding: 16 }}>
-      <h1>Foreman</h1>
-      <form onSubmit={submit}>
-        <label>
-          Email
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-            style={{ display: "block", width: "100%", margin: "8px 0", padding: 8 }} />
-        </label>
-        <button type="submit">Log in</button>
-      </form>
-      {error !== null && <p role="alert">{error}</p>}
+    <main className="container container--narrow" style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
+      <div className="card card--pad stack gap-4" style={{ width: "100%", maxWidth: 380 }}>
+        <div className="stack gap-2">
+          <h1 style={{ fontSize: "1.6rem" }}>Foreman</h1>
+          <p className="muted" style={{ margin: 0 }}>Sign in to your workspace.</p>
+        </div>
+        <form onSubmit={submit} className="stack gap-3">
+          <label className="stack gap-2">
+            Email
+            <input type="email" name="email" autoComplete="email" spellCheck={false}
+              value={email} autoFocus placeholder="you@company.com"
+              onChange={(e) => setEmail(e.target.value)} />
+          </label>
+          <button type="submit" className="btn-primary">Log in</button>
+        </form>
+        {error !== null && <p role="alert" className="alert" style={{ margin: 0 }}>{error}</p>}
+      </div>
     </main>
   );
 }

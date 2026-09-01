@@ -70,21 +70,26 @@ export function AgentTable({ agents, onAction }: {
   const header = (label: string, key: SortKey) => (
     <th>
       <button onClick={() => setSort((s) => ({ key, dir: s?.key === key ? (s.dir === 1 ? -1 : 1) : 1 }))}
-        style={{ all: "unset", cursor: "pointer", fontWeight: 600 }}>
+        style={{ all: "unset", cursor: "pointer", font: "inherit", letterSpacing: "inherit", textTransform: "inherit" }}>
         {label}{sort?.key === key ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
       </button>
     </th>
   );
 
   return (
-    <div>
-      <label>
-        Filter{" "}
-        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="name, platform, status" />
+    <div className="stack gap-3">
+      <label className="row gap-2">
+        Filter
+        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="name, platform, status" style={{ maxWidth: 280 }} />
       </label>
-      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
+      {rows.length === 0 && (
+        <div className="empty"><span className="empty__title">No agents connected</span><span>Agents report in over MCP and appear here live.</span></div>
+      )}
+      {rows.length > 0 && (
+      <div className="card" style={{ overflowX: "auto" }}>
+      <table>
         <thead>
-          <tr style={{ textAlign: "left", borderBottom: "2px solid #d0d7de" }}>
+          <tr>
             {header("Name", "display_name")}
             {header("Platform", "platform")}
             <th>Model</th>
@@ -99,12 +104,12 @@ export function AgentTable({ agents, onAction }: {
         </thead>
         <tbody>
           {rows.map((a) => (
-            <tr key={a.id} style={{ borderBottom: "1px solid #d8dee4" }}>
-              <td>{a.display_name}</td>
+            <tr key={a.id}>
+              <td style={{ fontWeight: 500 }}>{a.display_name}</td>
               <td>{a.platform}</td>
               <td><Depth value={a.model} /></td>
               <td>
-                <span style={{ color: STATUS_COLOR[a.status] ?? "#57606a" }}>●</span> {a.status}
+                <span aria-hidden className="status-dot" style={{ background: STATUS_COLOR[a.status] ?? "var(--text-3)" }} /> {a.status}
               </td>
               <td><Depth value={a.work_item_title} /></td>
               <td><Depth value={relative(a.last_seen_at)} /></td>
@@ -121,6 +126,8 @@ export function AgentTable({ agents, onAction }: {
           ))}
         </tbody>
       </table>
+      </div>
+      )}
     </div>
   );
 }

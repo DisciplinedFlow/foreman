@@ -19,7 +19,8 @@ describe("MetricsTab (§1.7)", () => {
   it("renders the tiles with week-over-week delta and formatted stall latency", () => {
     render(<MetricsTab metrics={metrics} />);
     expect(screen.getByText("5")).toBeTruthy();
-    expect(screen.getByText(/\+2 vs last week/)).toBeTruthy();
+    expect(screen.getByText(/\+2 wk/)).toBeTruthy();          // week-over-week delta pill
+    expect(screen.getByText(/6 total completions/)).toBeTruthy();
     expect(screen.getByText(/1\.5m/)).toBeTruthy();   // 90000ms median
     expect(screen.getByText("7")).toBeTruthy();        // active agents
     expect(screen.getByText(/6\s*\/\s*7/)).toBeTruthy(); // briefs delivered/generated

@@ -18,7 +18,7 @@ const tokens: TokenRow[] = [
 describe("SettingsTab", () => {
   it("save PATCHes the parsed shape (repos comma-split, numbers numeric)", async () => {
     const saves: object[] = [];
-    render(<SettingsTab project={project} installations={installations} tokens={tokens}
+    render(<SettingsTab project={project} installations={installations} tokens={tokens} orgSlug="dev"
       onSave={(b) => saves.push(b)} onMintToken={async () => ({ token_id: "x", token: "fmn_agt_x" })}
       onRevokeToken={() => {}} exportUrl="/api/projects/p1/export" />);
     const repos = screen.getByLabelText(/repositories/i);
@@ -33,7 +33,7 @@ describe("SettingsTab", () => {
 
   it("mint reveals the token once; revoke calls back", async () => {
     const revoked: string[] = [];
-    render(<SettingsTab project={project} installations={installations} tokens={tokens}
+    render(<SettingsTab project={project} installations={installations} tokens={tokens} orgSlug="dev"
       onSave={() => {}} onMintToken={async () => ({ token_id: "t2", token: "fmn_agt_SECRET" })}
       onRevokeToken={(id) => revoked.push(id)} exportUrl="#" />);
     await userEvent.click(screen.getByRole("button", { name: /mint/i }));
@@ -44,7 +44,7 @@ describe("SettingsTab", () => {
   });
 
   it("renders the export link", () => {
-    render(<SettingsTab project={project} installations={installations} tokens={tokens}
+    render(<SettingsTab project={project} installations={installations} tokens={tokens} orgSlug="dev"
       onSave={() => {}} onMintToken={async () => ({ token_id: "x", token: "y" })}
       onRevokeToken={() => {}} exportUrl="/api/projects/p1/export" />);
     const link = screen.getByRole("link", { name: /export/i });

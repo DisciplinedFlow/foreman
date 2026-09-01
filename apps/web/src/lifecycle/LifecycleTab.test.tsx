@@ -20,7 +20,7 @@ describe("LifecycleTab (LFC-3/4)", () => {
       gaps={{ untested: 1, unimplemented: 0, unspecced: 1 }} onScan={() => {}} />);
     expect(screen.getByText("tested")).toBeTruthy();
     expect(screen.getByText("stubbed")).toBeTruthy();
-    expect(screen.getByTestId("gaps").textContent).toContain("1 implemented without tests");
+    expect(screen.getByTestId("gaps").textContent).toContain("1 untested");
   });
 
   it("clicking a row shows its evidence refs", async () => {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 export interface EndpointRow {
   id: string;
@@ -31,50 +31,56 @@ export function LifecycleTab({ endpoints, gaps, onScan, scanning = false }: {
   const [open, setOpen] = useState<string | null>(null);
 
   return (
-    <div>
-      <p>
-        <button onClick={onScan} disabled={scanning}>{scanning ? "Scan queued…" : "Rescan"}</button>{" "}
-        <span data-testid="gaps">
-          {gaps.untested} implemented without tests · {gaps.unimplemented} spec without implementation · {gaps.unspecced} implemented without spec
-        </span>
-      </p>
-      {endpoints.length === 0 && <p>No endpoints discovered yet — run a scan.</p>}
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+    <div className="stack gap-4">
+      <div className="section-head">
+        <div className="row wrap gap-2" data-testid="gaps">
+          <span className="badge">{gaps.untested} untested</span>
+          <span className="badge">{gaps.unimplemented} unimplemented</span>
+          <span className="badge">{gaps.unspecced} unspecced</span>
+        </div>
+        <button onClick={onScan} disabled={scanning}>{scanning ? "Scan queued…" : "Rescan"}</button>
+      </div>
+      {endpoints.length === 0 ? (
+        <div className="empty"><span className="empty__title">No endpoints discovered</span><span>Run a scan to map the repo's lifecycle.</span></div>
+      ) : (
+      <div className="card" style={{ overflowX: "auto" }}>
+      <table>
         <thead>
-          <tr style={{ textAlign: "left", borderBottom: "2px solid #d0d7de" }}>
+          <tr>
             <th>Method</th><th>Path</th><th>State</th><th>Spec</th><th>Test</th><th>Items</th>
           </tr>
         </thead>
         <tbody>
           {endpoints.map((e) => (
-            <>
-              <tr key={e.id} style={{ borderBottom: "1px solid #d8dee4", cursor: "pointer" }}
-                onClick={() => setOpen(open === e.id ? null : e.id)}>
+            <Fragment key={e.id}>
+              <tr style={{ cursor: "pointer" }} onClick={() => setOpen(open === e.id ? null : e.id)}>
                 <td><code>{e.method}</code></td>
                 <td><code>{e.path}</code></td>
                 <td>
-                  <span style={{ color: STATE_COLOR[e.state] ?? "#57606a" }}>●</span> {e.state}
+                  <span aria-hidden className="status-dot" style={{ background: STATE_COLOR[e.state] ?? "var(--text-3)" }} /> {e.state}
                 </td>
                 <td>{e.in_spec ? "✓" : "—"}</td>
                 <td>{e.has_test ? "✓" : "—"}</td>
                 <td>{e.work_item_ids.length > 0 ? e.work_item_ids.length : "—"}</td>
               </tr>
               {open === e.id && (
-                <tr key={`${e.id}-detail`}>
-                  <td colSpan={6} style={{ fontSize: 12, padding: "4px 8px" }}>
-                    {e.evidence.map((ev, i) => (
-                      <code key={i} style={{ marginRight: 8, background: "rgba(175,184,193,0.2)", borderRadius: 4, padding: "1px 4px" }}>
-                        {ev.kind}: {ev.ref}
-                      </code>
-                    ))}
-                    {e.evidence.length === 0 && <em>no evidence recorded</em>}
+                <tr>
+                  <td colSpan={6}>
+                    <div className="row wrap gap-2">
+                      {e.evidence.map((ev, i) => (
+                        <span key={i} className="chip">{ev.kind}: {ev.ref}</span>
+                      ))}
+                      {e.evidence.length === 0 && <em className="muted">no evidence recorded</em>}
+                    </div>
                   </td>
                 </tr>
               )}
-            </>
+            </Fragment>
           ))}
         </tbody>
       </table>
+      </div>
+      )}
     </div>
   );
 }
