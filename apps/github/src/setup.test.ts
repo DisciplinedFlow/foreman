@@ -52,8 +52,9 @@ describe("WL-6 manifest flow", () => {
     const res = await fetch(`${url}/setup/github/start?org_slug=setup-org&gh_org=acme`);
     const html = await res.text();
     const match = html.match(/name="manifest" value="([^"]*)"/);
-    expect(match).not.toBeNull();
-    const manifest = JSON.parse(match![1].replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&amp;/g, "&"));
+    const raw = match?.[1];
+    expect(raw).toBeDefined();
+    const manifest = JSON.parse(raw!.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&amp;/g, "&"));
     // Task-1 handler + Task-2 merged-and-reviewed metric depend on this delivery.
     for (const event of ["issues", "pull_request", "pull_request_review", "projects_v2_item"]) {
       expect(manifest.default_events).toContain(event);
