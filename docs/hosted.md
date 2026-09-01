@@ -132,7 +132,10 @@ theme**. Here is what each step actually is today:
    exercised code, not aspirational. Note this is Foreman-first naming: the PRD's `WL-6` wording
    implies a partner-first bot identity (e.g. `<partner>-foreman[bot]`), which would need the
    manifest name to become a tenant-configurable value rather than the fixed `foreman-` prefix
-   used today — that's future work, not yet built.
+   used today — that's future work, not yet built. `default_events` now includes
+   `pull_request_review` (needed for the Task-1 handler and the merged-and-reviewed metric); Apps
+   created via the manifest flow *before* this fix must add the "Pull request review" event
+   subscription by hand in the App's GitHub settings, or that data stays permanently zero.
 2. **Control-plane provisioning** — **shipped.** `POST /tenants {slug, tier, isolation?,
    owner_email}` creates the organisation, finds-or-creates the owner user, and adds them as
    `owner` in one transaction (`apps/control/src/routes.ts`); `PATCH /tenants/:id` changes tier or
