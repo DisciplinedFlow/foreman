@@ -3,6 +3,7 @@ import type express from "express";
 import pg from "pg";
 import { createClient } from "redis";
 import { InMemoryKv, RedisKv, EchoCache, GithubClient, InstallationTokenSource, type Kv } from "@foreman/github-client";
+import { attachPoolErrorHandler, installProcessGuards } from "@foreman/db";
 import { createReceiver } from "./receiver.js";
 import { claimSyncJob, completeSyncJob } from "./jobs.js";
 import { handleSyncJob, type HandlerContext } from "./handlers/index.js";
@@ -11,10 +12,13 @@ import { mountSetup } from "./setup.js";
 import { openPem, resolveMasterKey } from "./crypto.js";
 import { resolveSessionSecret } from "./session-secret.js";
 
+installProcessGuards("github");
+
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL
     ?? "postgres://foreman_service:foreman_service@localhost:5433/foreman",
 });
+attachPoolErrorHandler(pool, "github");
 
 // Redis-backed Kv when configured (echo suppression must survive restarts in prod);
 // in-memory otherwise. Only this file constructs RedisKv.

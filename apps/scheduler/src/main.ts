@@ -1,11 +1,14 @@
 import pg from "pg";
-import { sweepExpiredLeases, enqueueReconcileJobs } from "@foreman/db";
+import { sweepExpiredLeases, enqueueReconcileJobs, attachPoolErrorHandler, installProcessGuards } from "@foreman/db";
 import { reapStuckSyncJobs } from "foreman-github/lib";
 import { detectStalls } from "./stall.js";
 import { watchPush } from "./push.js";
 import { generateBrief, briefDue, deliverBrief, mailerFromEnv, regenerateOverview, llmFromEnv } from "foreman-gen/lib";
 
+installProcessGuards("scheduler");
+
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+attachPoolErrorHandler(pool, "scheduler");
 const INTERVAL = Number(process.env.SWEEP_INTERVAL_MS ?? 30_000);
 
 setInterval(() => {

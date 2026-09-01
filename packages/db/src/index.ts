@@ -7,3 +7,4 @@ export {
 export { enqueueReconcileJobs } from "./reconcile.js";
 export { createAgentToken, authenticateAgentToken, revokeAgentToken, type AgentAuthCtx } from "./tokens.js";
 export { meterUsage } from "./usage.js";
+export { attachPoolErrorHandler, installProcessGuards } from "./resilience.js";
