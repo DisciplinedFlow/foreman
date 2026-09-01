@@ -1,16 +1,21 @@
 import pg from "pg";
+import { attachPoolErrorHandler, installProcessGuards } from "@foreman/db";
 import { createApp } from "./http.js";
 import { createEventHub } from "./stream.js";
 import { resolveSessionSecret } from "./session-secret.js";
+
+installProcessGuards("api");
 
 const appPool = new pg.Pool({
   connectionString: process.env.DATABASE_URL_APP
     ?? "postgres://foreman_app:foreman_app@localhost:5433/foreman",
 });
+attachPoolErrorHandler(appPool, "api");
 const servicePool = new pg.Pool({
   connectionString: process.env.DATABASE_URL
     ?? "postgres://foreman_service:foreman_service@localhost:5433/foreman",
 });
+attachPoolErrorHandler(servicePool, "api");
 
 const hub = await createEventHub(servicePool);
 const app = createApp({
