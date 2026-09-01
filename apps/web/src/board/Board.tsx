@@ -92,7 +92,8 @@ export function Board({ items, onMove }: { items: BoardItem[]; onMove?: (itemId:
       {total === 0 ? (
         <div className="empty"><span className="empty__title">No work yet</span><span>Create an item on the Gantt, or speak one with Foreman Voice.</span></div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12, alignItems: "start" }}>
+        <div className="board-scroll">
+        <div className="board-grid">
           {COLUMNS.map((col) => {
             const cards = cols[col.key] ?? [];
             const isOver = over === col.key;
@@ -131,6 +132,7 @@ export function Board({ items, onMove }: { items: BoardItem[]; onMove?: (itemId:
               </div>
             );
           })}
+        </div>
         </div>
       )}
       <div className="muted" style={{ fontSize: 11.5, marginTop: 12 }}>

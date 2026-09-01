@@ -99,9 +99,9 @@ export function MetricsTab({ metrics: m, activity = EMPTY_ACTIVITY }: { metrics:
         <span className="badge" style={{ borderRadius: "var(--r-pill)", padding: "5px 13px" }}>7d</span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
+      <div className="metrics-grid">
         {/* Hero — supervised throughput */}
-        <div className="hero-sheen" style={{ gridColumn: "span 2", background: "var(--grad)", borderRadius: "var(--r-lg)", padding: "22px 24px", color: "#fff", position: "relative", overflow: "hidden", boxShadow: "0 12px 32px rgba(124,92,255,0.35)" }}>
+        <div className="hero-sheen metrics-hero" style={{ background: "var(--grad)", borderRadius: "var(--r-lg)", padding: "22px 24px", color: "#fff", position: "relative", overflow: "hidden", boxShadow: "0 12px 32px rgba(124,92,255,0.35)" }}>
           <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.04em", opacity: 0.85 }}>SUPERVISED THROUGHPUT / WK</div>
           <div className="row" style={{ alignItems: "baseline", gap: 12, marginTop: 8 }}>
             <span style={{ fontSize: 52, fontWeight: 700, letterSpacing: "-0.03em", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{heroNum}</span>

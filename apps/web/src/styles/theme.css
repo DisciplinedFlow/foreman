@@ -95,7 +95,7 @@ body {
 /* ---- Base --------------------------------------------------------------- */
 
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; min-height: 100%; }
+html, body { margin: 0; padding: 0; min-height: 100%; overflow-x: hidden; }
 body {
   background: var(--canvas);
   color: var(--t1);
@@ -192,6 +192,32 @@ tbody tr:hover { background: var(--accSoft); }
   display: flex; flex-direction: column; gap: 8px;
   position: sticky; top: 0; height: 100vh; box-sizing: border-box;
 }
+
+/* Left rail collapses to an off-canvas drawer at ≤768px (mobile cutover). */
+@media (max-width: 768px) {
+  .shell { grid-template-columns: 1fr; }
+  .rail {
+    position: fixed; left: 0; top: 0; height: 100dvh; width: 230px;
+    z-index: var(--z-popover);
+    background: var(--canvas);
+    transform: translateX(-100%);
+    transition: transform 0.28s var(--ease);
+    box-shadow: var(--shadow);
+  }
+  .rail.rail--open { transform: translateX(0); }
+}
+
+.rail__scrim {
+  display: none;
+}
+@media (max-width: 768px) {
+  .rail__scrim {
+    display: block;
+    position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45);
+    z-index: calc(var(--z-popover) - 1);
+    border: none; padding: 0; cursor: default;
+  }
+}
 .rail__brand { display: flex; align-items: center; gap: 9px; padding: 4px 8px 12px; }
 .logo-tile {
   width: 22px; height: 22px; border-radius: 7px; background: var(--grad);
@@ -240,6 +266,12 @@ tbody tr:hover { background: var(--accSoft); }
   background: var(--ctl); border: 1px solid var(--line); border-radius: var(--r-sm);
   padding: 6px 10px; color: var(--t3); font-size: 13px;
 }
+.hamburger-btn {
+  width: 34px; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center;
+  border-radius: var(--r-sm); background: var(--ctl); border: 1px solid var(--line);
+}
+.hamburger-btn__lines { display: flex; flex-direction: column; gap: 3px; }
+.hamburger-btn__lines span { display: block; width: 16px; height: 2px; border-radius: 1px; background: var(--t1); }
 .kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
 .icon-btn {
   position: relative; width: 30px; height: 30px; border-radius: var(--r-sm);
@@ -248,8 +280,12 @@ tbody tr:hover { background: var(--accSoft); }
 }
 .icon-btn__dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); border: 2px solid var(--canvas); }
 
-.content { padding: 24px 28px 48px; max-width: 1240px; }
+.content { padding: 24px 28px 48px; max-width: min(1720px, 100%); width: 100%; }
 .tab-content { animation: riseIn 0.55s var(--ease) both; }
+
+@media (max-width: 640px) {
+  .content { padding: 16px 16px 48px; }
+}
 
 .back-link { display: inline-flex; align-items: center; gap: 4px; color: var(--t2); font-size: 0.9rem; }
 .back-link:hover { color: var(--acc); text-decoration: none; }
@@ -308,6 +344,31 @@ tbody tr:hover { background: var(--accSoft); }
 .skeleton { border-radius: var(--r-sm); background: linear-gradient(90deg, var(--ctl) 25%, var(--line) 37%, var(--ctl) 63%); background-size: 400% 100%; animation: shimmer 1.4s var(--ease) infinite; }
 .alert { padding: 10px 14px; border-radius: var(--r-sm); font-size: 0.9rem; background: var(--badSoft); color: var(--bad); border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent); }
 
+/* ---- Metrics grid (§1.7) -------------------------------------------------- */
+.metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.metrics-hero { grid-column: span 2; }
+@media (max-width: 1024px) {
+  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .metrics-grid { grid-template-columns: repeat(1, 1fr); }
+  .metrics-hero { grid-column: span 1; }
+}
+
+/* ---- Board (kanban) ------------------------------------------------------ */
+.board-scroll { overflow-x: auto; }
+.board-grid { display: grid; grid-template-columns: repeat(6, minmax(220px, 1fr)); gap: 12px; align-items: start; }
+
+/* ---- Settings-style 2-col form grid --------------------------------------- */
+.form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+@media (max-width: 640px) {
+  .form-grid-2 { grid-template-columns: 1fr; }
+}
+
+/* ---- Scrollable table cards ------------------------------------------------ */
+.table-scroll { overflow-x: auto; }
+.table-scroll table { min-width: 720px; }
+
 /* ---- Utilities ---------------------------------------------------------- */
 .stack { display: flex; flex-direction: column; }
 .row { display: flex; align-items: center; }
@@ -315,6 +376,12 @@ tbody tr:hover { background: var(--accSoft); }
 .wrap { flex-wrap: wrap; }
 .muted { color: var(--t2); }
 .tnum { font-variant-numeric: tabular-nums; }
+
+.only-mobile { display: none; }
+@media (max-width: 768px) {
+  .only-mobile { display: flex; }
+  .hide-md { display: none; }
+}
 
 /* ---- Keyframes ---------------------------------------------------------- */
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }

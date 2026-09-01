@@ -158,7 +158,7 @@ export function SettingsTab({ project, installations, tokens, orgSlug, onSave, o
           </p>
         )}
         {tokens.length === 0 ? <p className="muted" style={{ margin: 0 }}>No tokens yet.</p> : (
-        <div style={{ overflowX: "auto" }}>
+        <div className="table-scroll">
         <table>
           <tbody>
             {tokens.map((t) => (

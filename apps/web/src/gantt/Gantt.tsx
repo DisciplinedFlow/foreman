@@ -129,7 +129,7 @@ export function Gantt({ items, deps, viewportHeight = 600, onReschedule }: Gantt
 
   return (
     <div
-      style={{ overflow: "auto", height: viewportHeight, border: "1px solid var(--line)", borderRadius: "var(--r-md)", background: "var(--surface)" }}
+      style={{ overflow: "auto", width: "100%", maxWidth: "100%", height: viewportHeight, border: "1px solid var(--line)", borderRadius: "var(--r-md)", background: "var(--surface)" }}
       onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
       data-testid="gantt-scroll"
     >
