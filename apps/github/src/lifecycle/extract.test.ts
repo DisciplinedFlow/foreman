@@ -269,6 +269,29 @@ public class OrderController {
     expect(keys).toEqual(["GET /orders"]);
   });
 
+  it("a multi-method @RequestMapping array doesn't corrupt the class prefix (regression guard)", () => {
+    const src = `
+@RequestMapping("/api")
+class OrderController {
+    @RequestMapping(value = "/orders", method = {RequestMethod.GET, RequestMethod.POST})
+    fun orders() {}
+
+    @GetMapping("/items")
+    fun items() {}
+}
+`;
+    const found = extractSpring(src);
+    const keys = found.map((f) => `${f.method} ${f.path}`).sort();
+    // The old bug: `method` failed to parse out of the braced array, so the
+    // line was mistaken for a class-level prefix and `/api` got overwritten
+    // with `/orders` -- every mapping below it then joined onto the wrong
+    // base. The prefix must survive regardless of what the multi-method
+    // line itself resolves to (emitting both GET and POST is fine, emitting
+    // nothing would also be fine -- either is acceptable per spec).
+    expect(keys).toContain("GET /api/items");
+    expect(keys).toEqual(["GET /api/items", "GET /api/orders", "POST /api/orders"]);
+  });
+
   it("joins Kotlin-style @GetMapping with the class prefix (regression guard)", () => {
     const src = `
 @RequestMapping("/api")

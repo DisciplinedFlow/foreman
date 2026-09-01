@@ -260,25 +260,48 @@ export function extractRails(content: string): Found[] {
 // + per-method mappings; {id} path variables kept verbatim. Phase 9 deviation
 // 5: @RequestMapping's own argument list is scanned rather than matched by a
 // single rigid regex, so `value=`/`path=`/bare-string and `method =
-// RequestMethod.X` are accepted in any order; a line with no `method` arg is
-// treated as the class-level prefix (matches prior behaviour).
+// RequestMethod.X` (including a braced multi-method array, `method =
+// {RequestMethod.GET, RequestMethod.POST}`) are accepted in any order. Only a
+// line with NO `method` arg at all is treated as the class-level prefix —
+// a method mapping whose method couldn't be parsed is skipped outright
+// rather than corrupting the prefix (regression fixed in Phase 9 review).
 const SPRING_METHOD_RE = /@(Get|Post|Put|Patch|Delete)Mapping(?:\(\s*(?:value\s*=\s*)?["']([^"']*)["']\s*\))?/;
 const SPRING_REQMAP_RE = /@RequestMapping\(([^)]*)\)/;
 
-function parseSpringRequestMappingArgs(argList: string): { path: string | null; method: string | null } {
+function parseSpringRequestMappingArgs(
+  argList: string,
+): { path: string | null; methods: string[]; hasMethodArg: boolean } {
+  // The `method` arg is pulled out of the raw string *before* splitting on
+  // comma, because a multi-method array — `method = {RequestMethod.GET,
+  // RequestMethod.POST}` — has its own internal comma that would otherwise
+  // split it into two unparseable fragments (Phase 9 regression: that used
+  // to leave `method` null while a path was still found, and the caller
+  // mistook the line for a class-level prefix, corrupting it for every
+  // @GetMapping below). `hasMethodArg` reports whether *any* `method` key
+  // was present, parseable or not, so the caller can tell "this is a
+  // method mapping with a method we couldn't parse" from "this really is
+  // just a class-level prefix".
+  const methodMatch = /\bmethod\s*=\s*(\{[^}]*\}|RequestMethod\.[A-Z]+)/.exec(argList);
+  const hasMethodArg = methodMatch !== null;
+  const methods: string[] = [];
+  let rest = argList;
+  if (methodMatch !== null) {
+    rest = argList.slice(0, methodMatch.index) + argList.slice(methodMatch.index + methodMatch[0].length);
+    for (const m of methodMatch[1]!.matchAll(/RequestMethod\.(GET|POST|PUT|PATCH|DELETE)/g)) {
+      methods.push(m[1]!);
+    }
+  }
+
   let path: string | null = null;
-  let method: string | null = null;
-  for (const rawArg of argList.split(",")) {
+  for (const rawArg of rest.split(",")) {
     const arg = rawArg.trim();
     if (arg === "") continue;
     const named = /^(?:value|path)\s*=\s*["']([^"']*)["']$/.exec(arg);
     if (named !== null) { path = named[1]!; continue; }
     const bare = /^["']([^"']*)["']$/.exec(arg);
     if (bare !== null) { path = bare[1]!; continue; }
-    const methodArg = /^method\s*=\s*RequestMethod\.(GET|POST|PUT|PATCH|DELETE)$/.exec(arg);
-    if (methodArg !== null) { method = methodArg[1]!; continue; }
   }
-  return { path, method };
+  return { path, methods, hasMethodArg };
 }
 
 export function extractSpring(content: string): Found[] {
@@ -292,12 +315,15 @@ export function extractSpring(content: string): Found[] {
   for (const line of lines) {
     const rm = SPRING_REQMAP_RE.exec(line);
     if (rm !== null) {
-      const { path, method } = parseSpringRequestMappingArgs(rm[1]!);
-      if (method === null) {
+      const { path, methods, hasMethodArg } = parseSpringRequestMappingArgs(rm[1]!);
+      if (!hasMethodArg) {
+        // Only a @RequestMapping with NO method argument at all sets the
+        // class-level prefix — a method mapping we failed to parse must
+        // never be mistaken for one (that's the bug this guards against).
         if (path !== null) prefix = path.replace(/\/$/, "");
         continue;
       }
-      push(method, path ?? "");
+      for (const method of methods) push(method, path ?? "");
       continue;
     }
     const mm = SPRING_METHOD_RE.exec(line);
