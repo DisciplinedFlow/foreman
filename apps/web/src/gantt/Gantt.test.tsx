@@ -55,4 +55,25 @@ describe("Gantt", () => {
     render(<Gantt items={items} deps={[{ blocked_id: "B", blocker_id: "A" }]} viewportHeight={700} onReschedule={() => {}} />);
     expect(document.querySelector('[data-arrow="A->B"]')).not.toBeNull();
   });
+
+  it("renders a week-date header column per 7 days of the scale", () => {
+    const items = [item("A", { startAt: "2026-09-01", targetAt: "2026-09-01" }),
+      item("B", { startAt: "2026-09-20", targetAt: "2026-09-22" })];
+    render(<Gantt items={items} deps={[]} viewportHeight={700} onReschedule={() => {}} />);
+    expect(screen.getByText("Sep 1")).toBeTruthy();
+    expect(screen.getByText("Sep 8")).toBeTruthy();
+    expect(screen.getByText("Sep 15")).toBeTruthy();
+    expect(screen.getByText("Work item")).toBeTruthy();
+  });
+
+  it("draws a TODAY line only when today falls within the chart's date range", () => {
+    const past = [item("old", { startAt: "2000-01-01", targetAt: "2000-01-02" })];
+    const { rerender } = render(<Gantt items={past} deps={[]} viewportHeight={700} onReschedule={() => {}} />);
+    expect(screen.queryByText("TODAY")).toBeNull();
+
+    const today = new Date().toISOString().slice(0, 10);
+    const spanning = [item("now", { startAt: today, targetAt: today })];
+    rerender(<Gantt items={spanning} deps={[]} viewportHeight={700} onReschedule={() => {}} />);
+    expect(screen.getByText("TODAY")).toBeTruthy();
+  });
 });
