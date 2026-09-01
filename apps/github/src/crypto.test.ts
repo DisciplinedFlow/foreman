@@ -84,6 +84,13 @@ describe("resolveMasterKey (pluggable source, KMS-ready)", () => {
     await expect(resolveMasterKey({ FOREMAN_MASTER_KEY_FILE: file })).rejects.toThrow(/FOREMAN_MASTER_KEY_FILE/);
   });
 
+  it("FOREMAN_MASTER_KEY_FILE pointing at a nonexistent path throws, naming the source", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "foreman-master-key-"));
+    tmpFiles.push(dir);
+    const file = path.join(dir, "does-not-exist.key");
+    await expect(resolveMasterKey({ FOREMAN_MASTER_KEY_FILE: file })).rejects.toThrow(/FOREMAN_MASTER_KEY_FILE/);
+  });
+
   it("runs FOREMAN_MASTER_KEY_CMD and validates trimmed stdout", async () => {
     const cmd = `node -e "console.log('${KEY}')"`;
     expect(await resolveMasterKey({ FOREMAN_MASTER_KEY_CMD: cmd })).toBe(KEY);
@@ -91,6 +98,11 @@ describe("resolveMasterKey (pluggable source, KMS-ready)", () => {
 
   it("FOREMAN_MASTER_KEY_CMD with bad hex output throws, naming the source", async () => {
     const cmd = `node -e "console.log('not-hex')"`;
+    await expect(resolveMasterKey({ FOREMAN_MASTER_KEY_CMD: cmd })).rejects.toThrow(/FOREMAN_MASTER_KEY_CMD/);
+  });
+
+  it("FOREMAN_MASTER_KEY_CMD that exits non-zero throws, naming the source", async () => {
+    const cmd = process.platform === "win32" ? "exit /b 1" : "exit 1";
     await expect(resolveMasterKey({ FOREMAN_MASTER_KEY_CMD: cmd })).rejects.toThrow(/FOREMAN_MASTER_KEY_CMD/);
   });
 

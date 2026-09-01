@@ -35,7 +35,12 @@ export async function resolveMasterKey(env: NodeJS.ProcessEnv = process.env): Pr
 
   const file = env.FOREMAN_MASTER_KEY_FILE;
   if (file !== undefined && file !== "") {
-    const raw = (await readFile(file, "utf8")).trim();
+    let raw: string;
+    try {
+      raw = (await readFile(file, "utf8")).trim();
+    } catch (err) {
+      throw new Error(`FOREMAN_MASTER_KEY_FILE: failed to read "${file}": ${(err as Error).message}`);
+    }
     return assertHex(raw, "FOREMAN_MASTER_KEY_FILE");
   }
 
@@ -44,9 +49,14 @@ export async function resolveMasterKey(env: NodeJS.ProcessEnv = process.env): Pr
     // windowsVerbatimArguments: cmd.exe's own /c parsing (not CommandLineToArgvW)
     // must see the command string's quotes exactly as written, or Node's default
     // argv-escaping mangles them and cmd.exe silently runs nothing.
-    const { stdout } = process.platform === "win32"
-      ? await execFile("cmd", ["/c", cmd], { windowsVerbatimArguments: true })
-      : await execFile("/bin/sh", ["-c", cmd]);
+    let stdout: string;
+    try {
+      ({ stdout } = process.platform === "win32"
+        ? await execFile("cmd", ["/c", cmd], { windowsVerbatimArguments: true })
+        : await execFile("/bin/sh", ["-c", cmd]));
+    } catch (err) {
+      throw new Error(`FOREMAN_MASTER_KEY_CMD: command failed: ${(err as Error).message}`);
+    }
     return assertHex(stdout.trim(), "FOREMAN_MASTER_KEY_CMD");
   }
 
