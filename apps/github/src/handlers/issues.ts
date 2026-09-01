@@ -33,7 +33,7 @@ const KINDS = new Set(["epic", "story", "task", "bug", "chore"]);
 // Statuses owned by the queue (Phase 1) — inbound sync never clobbers them (deviation 5).
 const QUEUE_OWNED = new Set(["claimed", "in_progress", "in_review"]);
 
-async function resolveProject(tx: Queryable, orgId: string, repo: string): Promise<string | null> {
+export async function resolveProject(tx: Queryable, orgId: string, repo: string): Promise<string | null> {
   const res = await tx.query(
     "select id from projects where organisation_id = $1 and gh_repos @> array[$2]::text[]", [orgId, repo]);
   return res.rowCount ? res.rows[0].id : null;
@@ -87,7 +87,7 @@ export async function handleIssuesEvent(tx: Queryable, job: SyncJob): Promise<vo
   });
 }
 
-const CLOSES_RE = /(?:close[sd]?|fixe?[sd]?|resolve[sd]?)\s+#(\d+)/i;
+export const CLOSES_RE = /(?:close[sd]?|fixe?[sd]?|resolve[sd]?)\s+#(\d+)/i;
 
 export async function handlePullRequestEvent(tx: Queryable, job: SyncJob): Promise<void> {
   const p = prPayload.safeParse(job.payload);

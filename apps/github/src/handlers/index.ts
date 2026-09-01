@@ -5,6 +5,7 @@ import type { SyncJob } from "../jobs.js";
 import type { GithubClientLike } from "../sync/field-map.js";
 import { fullSync } from "../sync/full-sync.js";
 import { handleIssuesEvent, handlePullRequestEvent } from "./issues.js";
+import { handlePullRequestReviewEvent } from "./reviews.js";
 import { handleProjectItemEvent } from "./project-item.js";
 import { handleCheckRunEvent } from "./check-run.js";
 import { handleDeploymentStatus } from "./deployment.js";
@@ -27,6 +28,7 @@ export async function handleSyncJob(
   switch (job.event_name) {
     case "issues": return handleIssuesEvent(tx, job);
     case "pull_request": return handlePullRequestEvent(tx, job);
+    case "pull_request_review": return handlePullRequestReviewEvent(tx, job);
     case "projects_v2_item": return handleProjectItemEvent(tx, ctx.echo ?? fallbackEcho, job);
     case "check_run": return handleCheckRunEvent(tx, job);
     case "deployment_status": return handleDeploymentStatus(tx, job);
