@@ -92,7 +92,7 @@ export function Gantt({ items, deps, viewportHeight = 600, onReschedule }: Gantt
 
   const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const todayOffsetDays = Math.round((Date.parse(todayISO) - Date.parse(scale.start)) / DAY_MS);
-  const showToday = todayOffsetDays >= 0 && todayOffsetDays <= scale.days;
+  const showToday = todayOffsetDays >= 0 && todayOffsetDays < scale.days;
   const todayX = scale.x(todayISO);
 
   // Drag state: preview locally, commit on pointerup (GNT-8; deviation 4 makes it async).
