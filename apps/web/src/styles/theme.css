@@ -359,12 +359,6 @@ tbody tr:hover { background: var(--accSoft); }
 .board-scroll { overflow-x: auto; }
 .board-grid { display: grid; grid-template-columns: repeat(6, minmax(220px, 1fr)); gap: 12px; align-items: start; }
 
-/* ---- Settings-style 2-col form grid --------------------------------------- */
-.form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
-@media (max-width: 640px) {
-  .form-grid-2 { grid-template-columns: 1fr; }
-}
-
 /* ---- Scrollable table cards ------------------------------------------------ */
 .table-scroll { overflow-x: auto; }
 .table-scroll table { min-width: 720px; }

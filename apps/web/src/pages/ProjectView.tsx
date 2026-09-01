@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, patchSchedule, useProjectStream } from "../api.js";
 import { getTheme, toggleTheme } from "../theme.js";
@@ -29,6 +29,16 @@ export function ProjectView() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<"gantt" | "board" | "agents" | "graph" | "overview" | "lifecycle" | "settings" | "metrics">("gantt");
   const [railOpen, setRailOpen] = useState(false);
+  // Mobile cutover tracked live (not just read once) so resizing across 768px
+  // — e.g. rotating a tablet — re-evaluates the inert/focus-containment rules
+  // below. Guarded for SSR/jsdom, where matchMedia may not exist.
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 768px)").matches
+      : false);
+  const railRef = useRef<HTMLElement | null>(null);
+  const contentColRef = useRef<HTMLDivElement | null>(null);
+  const hamburgerRef = useRef<HTMLButtonElement | null>(null);
   const [themeLabel, setThemeLabel] = useState(getTheme() === "dark" ? "Light mode" : "Dark mode");
   const [settings, setSettings] = useState<{ project: ProjectSettings; installations: InstallationRow[]; tokens: TokenRow[]; orgSlug: string } | null>(null);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
@@ -91,6 +101,47 @@ export function ProjectView() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [railOpen]);
+
+  // Live mobile-cutover tracking (guarded — matchMedia may not exist under jsdom).
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(max-width: 768px)");
+    const onChange = () => setIsMobile(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  // a11y: on mobile, a closed drawer must not leave its ~10 controls in the tab
+  // order / a11y tree just because it's transformed off-screen, and an open
+  // drawer must not let focus escape into the dimmed content behind the scrim.
+  // `inert` handles both with no manual focus trap. Desktop (isMobile===false)
+  // never sets either flag, so the rail and content stay fully interactive there.
+  useEffect(() => {
+    const el = railRef.current;
+    if (el === null) return;
+    el.inert = isMobile && !railOpen;
+  }, [isMobile, railOpen]);
+
+  useEffect(() => {
+    const el = contentColRef.current;
+    if (el === null) return;
+    el.inert = isMobile && railOpen;
+  }, [isMobile, railOpen]);
+
+  // Focus management: only on mobile, and only on an actual open/close
+  // transition (never steals focus on mount or on desktop). Opening sends
+  // focus into the drawer; closing returns it to the control that opened it.
+  const wasRailOpenRef = useRef(railOpen);
+  useEffect(() => {
+    const wasOpen = wasRailOpenRef.current;
+    wasRailOpenRef.current = railOpen;
+    if (!isMobile || wasOpen === railOpen) return;
+    if (railOpen) {
+      railRef.current?.querySelector<HTMLElement>('a[href], button:not([disabled])')?.focus();
+    } else {
+      hamburgerRef.current?.focus();
+    }
+  }, [railOpen, isMobile]);
 
   const ganttItems: GanttItem[] = mergeSchedule(
     items.map((i) => ({
@@ -176,7 +227,7 @@ export function ProjectView() {
       {railOpen && (
         <button className="rail__scrim" aria-label="Close navigation" onClick={() => setRailOpen(false)} />
       )}
-      <aside className={`rail${railOpen ? " rail--open" : ""}`}>
+      <aside ref={railRef} className={`rail${railOpen ? " rail--open" : ""}`}>
         <div className="rail__brand">
           <span className="logo-tile" aria-hidden />
           <span style={{ fontWeight: 600, letterSpacing: "-0.01em" }}>Foreman</span>
@@ -211,10 +262,10 @@ export function ProjectView() {
         </div>
       </aside>
 
-      <div style={{ minWidth: 0 }}>
+      <div ref={contentColRef} data-testid="content-col" style={{ minWidth: 0 }}>
         <header className="topbar">
           <div className="row gap-3">
-            <button className="hamburger-btn only-mobile" aria-label="Toggle navigation" aria-expanded={railOpen}
+            <button ref={hamburgerRef} className="hamburger-btn only-mobile" aria-label="Toggle navigation" aria-expanded={railOpen}
               onClick={() => setRailOpen((o) => !o)}>
               <span className="hamburger-btn__lines" aria-hidden><span /><span /><span /></span>
             </button>
