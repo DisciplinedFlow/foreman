@@ -10,6 +10,13 @@ export interface CheckpointRow {
   created_at: string;
 }
 
+const age = (iso: string): string => {
+  const sec = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (sec < 60) return `${Math.floor(sec)}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  return `${Math.floor(sec / 3600)}h`;
+};
+
 // BRF-5/§3.4: the human side of work.checkpoint. Answering here completes the
 // agent's task on its next poll. All strings are agent-authored → text nodes only.
 export function DecisionCards({ checkpoints, onAnswer }: {
@@ -31,8 +38,9 @@ export function DecisionCards({ checkpoints, onAnswer }: {
       {checkpoints.map((cp) => (
         <div key={cp.id} className="card card--pad stack gap-2" style={{ borderLeft: "3px solid var(--warning)" }}>
           <div className="row gap-2">
-            <span className="badge" style={{ background: "color-mix(in srgb, var(--warning) 18%, transparent)", color: "var(--warning)" }}>Decision needed</span>
-            <span className="muted" style={{ fontSize: "0.85rem" }}>{cp.work_item_title}</span>
+            <span className="badge" style={{ background: "var(--warnSoft)", color: "var(--warn)", letterSpacing: "0.04em", borderRadius: "var(--r-pill)" }}>DECISION NEEDED</span>
+            <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{cp.work_item_title}</span>
+            <span className="muted" style={{ fontSize: "0.78rem", marginLeft: "auto" }}>{age(cp.created_at)}</span>
           </div>
           <p style={{ margin: 0, fontWeight: 600 }}>{cp.question}</p>
           {cp.context !== null && <p className="muted" style={{ margin: 0, fontSize: "0.9rem" }}>{cp.context}</p>}

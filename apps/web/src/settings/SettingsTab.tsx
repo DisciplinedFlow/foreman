@@ -74,7 +74,11 @@ export function SettingsTab({ project, installations, tokens, orgSlug, onSave, o
   const inputStyle = { width: "100%", maxWidth: 440 } as const;
 
   return (
-    <div className="stack gap-4" style={{ maxWidth: 720 }}>
+    <div className="stack gap-4" style={{ maxWidth: 760 }}>
+      <div className="stack" style={{ gap: 2 }}>
+        <h2>Settings</h2>
+        <span className="muted" style={{ fontSize: 12.5 }}>Integrations, queue policy, briefs, and access.</span>
+      </div>
       <section className="card card--pad stack gap-3">
         <div className="section-head">
           <h3>Integrations</h3>

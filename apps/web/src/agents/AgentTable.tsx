@@ -104,12 +104,14 @@ export function AgentTable({ agents, onAction }: {
         </thead>
         <tbody>
           {rows.map((a) => (
-            <tr key={a.id}>
-              <td style={{ fontWeight: 500 }}>{a.display_name}</td>
-              <td>{a.platform}</td>
+            <tr key={a.id} style={a.status === "stalled" ? { background: "var(--warnSoft)" } : undefined}>
+              <td style={{ fontWeight: 600 }}>{a.display_name}</td>
+              <td style={{ fontFamily: "var(--mono)", fontSize: "12px", color: "var(--t2)" }}>{a.platform}</td>
               <td><Depth value={a.model} /></td>
               <td>
-                <span aria-hidden className="status-dot" style={{ background: STATUS_COLOR[a.status] ?? "var(--text-3)" }} /> {a.status}
+                <span aria-hidden className="status-dot"
+                  style={{ background: STATUS_COLOR[a.status] ?? "var(--text-3)",
+                    animation: (a.status === "working" || a.status === "stalled") ? "pulse 1.4s ease infinite" : undefined }} /> {a.status}
               </td>
               <td><Depth value={a.work_item_title} /></td>
               <td><Depth value={relative(a.last_seen_at)} /></td>

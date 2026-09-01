@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, patchSchedule, useProjectStream } from "../api.js";
+import { getTheme, toggleTheme } from "../theme.js";
 import { AgentTable, type AgentRow } from "../agents/AgentTable.js";
 import { DecisionCards, type CheckpointRow } from "../checkpoints/DecisionCards.js";
 import { CommGraph, type CommNode, type CommEdge } from "../graph/CommGraph.js";
@@ -10,10 +11,12 @@ import { SettingsTab, type ProjectSettings, type InstallationRow, type TokenRow 
 import { MetricsTab, type Metrics } from "../metrics/MetricsTab.js";
 import { Gantt } from "../gantt/Gantt.js";
 import { mergeSchedule, type GanttItem } from "../gantt/layout.js";
+import { Board } from "../board/Board.js";
+import { VoiceDock } from "../voice/VoiceDock.js";
 
 interface ItemRow {
   id: string; title: string; status: string; kind: string; parent_id: string | null;
-  start_at: string | null; target_at: string | null;
+  start_at: string | null; target_at: string | null; priority: number;
 }
 interface Dep { blocked_id: string; blocker_id: string }
 interface ScheduleRow { work_item_id: string; critical: boolean; slack: number }
@@ -24,7 +27,8 @@ export function ProjectView() {
   const { id } = useParams();
   const projectId = id!;
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"gantt" | "agents" | "graph" | "overview" | "lifecycle" | "settings" | "metrics">("gantt");
+  const [tab, setTab] = useState<"gantt" | "board" | "agents" | "graph" | "overview" | "lifecycle" | "settings" | "metrics">("gantt");
+  const [themeLabel, setThemeLabel] = useState(getTheme() === "dark" ? "Light mode" : "Dark mode");
   const [settings, setSettings] = useState<{ project: ProjectSettings; installations: InstallationRow[]; tokens: TokenRow[]; orgSlug: string } | null>(null);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [newItemOpen, setNewItemOpen] = useState(false);
@@ -146,28 +150,82 @@ export function ProjectView() {
   };
 
   const tabs = [
-    ["gantt", "Gantt"], ["agents", "Agents"], ["graph", "Graph"], ["overview", "Overview"],
-    ["lifecycle", "Lifecycle"], ["metrics", "Metrics"], ["settings", "Settings"],
+    ["gantt", "Gantt"], ["board", "Board"], ["agents", "Agents"], ["graph", "Graph"],
+    ["overview", "Overview"], ["lifecycle", "Lifecycle"], ["metrics", "Metrics"], ["settings", "Settings"],
   ] as const;
+  const tabTitles: Record<string, string> = {
+    gantt: "Gantt", board: "Board", agents: "Agents", graph: "Graph",
+    overview: "Overview", lifecycle: "Lifecycle", metrics: "Metrics", settings: "Settings",
+  };
+  const flipTheme = () => setThemeLabel(toggleTheme() === "dark" ? "Light mode" : "Dark mode");
 
   return (
-    <>
-      <header className="topbar">
-        <Link to="/" className="back-link"><span aria-hidden>‹</span> Projects</Link>
-        <span className="topbar__title">{name || "Project"}</span>
-      </header>
-      <main className="container" style={{ paddingBlock: "var(--sp-5)" }}>
-        <DecisionCards checkpoints={checkpoints} onAnswer={onCheckpointAnswer} />
-        <nav className="segmented" role="tablist" aria-label="Project sections" style={{ marginBottom: "var(--sp-5)" }}>
+    <div className="shell">
+      <aside className="rail">
+        <div className="rail__brand">
+          <span className="logo-tile" aria-hidden />
+          <span style={{ fontWeight: 600, letterSpacing: "-0.01em" }}>Foreman</span>
+        </div>
+        <Link to="/" className="rail__switcher" style={{ textDecoration: "none", color: "inherit" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>{name || "Project"}</div>
+            <div style={{ fontSize: 11, color: "var(--t3)" }}>workspace</div>
+          </div>
+          <span aria-hidden style={{ color: "var(--t3)", fontSize: 11 }}>⌄</span>
+        </Link>
+        <div className="rail__section">WORKSPACE</div>
+        <nav className="stack" style={{ gap: 2 }} role="tablist" aria-label="Project sections">
           {tabs.map(([key, label]) => (
-            <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>
+            <button key={key} role="tab" aria-selected={tab === key}
+              className={`nav-item${tab === key ? " active" : ""}`} onClick={() => setTab(key)}>
+              <span>{label}</span>
+              {key === "agents" && checkpoints.length > 0 && (
+                <span className="badge" style={{ background: "var(--warnSoft)", color: "var(--warn)", borderRadius: "var(--r-pill)" }}>
+                  {checkpoints.length}
+                </span>
+              )}
+            </button>
           ))}
         </nav>
+        <div className="rail__spacer" />
+        <button className="nav-item" style={{ border: "1px solid var(--line)", background: "var(--ctl)" }} onClick={flipTheme}>{themeLabel}</button>
+        <div className="rail__user">
+          <span className="avatar" style={{ width: 26, height: 26, fontSize: 10 }}>JD</span>
+          <div><div style={{ fontSize: 12.5, fontWeight: 500 }}>Jae Dorsey</div><div style={{ fontSize: 10.5, color: "var(--t3)" }}>Eng lead</div></div>
+        </div>
+      </aside>
+
+      <div style={{ minWidth: 0 }}>
+        <header className="topbar">
+          <div className="crumb">
+            <Link to="/">Projects</Link><span aria-hidden>/</span>
+            <span style={{ color: "var(--t1)", fontWeight: 600 }}>{tabTitles[tab]}</span>
+          </div>
+          <div className="row gap-3">
+            <div className="search-stub" aria-hidden>
+              <span style={{ flex: 1 }}>Search</span><span className="kbd">⌘K</span>
+            </div>
+            <span className="icon-btn" aria-hidden><span className="icon-btn__dot" /></span>
+            <span className="avatar" style={{ width: 28, height: 28, fontSize: 10.5 }}>JD</span>
+          </div>
+        </header>
+        <main className="content">
+          <DecisionCards checkpoints={checkpoints} onAnswer={onCheckpointAnswer} />
+          <div className="tab-content" key={tab}>
       {tab === "gantt" && (
         <>
-          <p>
-            <button className={newItemOpen ? "btn-ghost" : "btn-primary"} onClick={() => setNewItemOpen((o) => !o)}>{newItemOpen ? "Cancel" : "+ New item"}</button>
-          </p>
+          <div className="section-head">
+            <div className="stack" style={{ gap: 2 }}>
+              <h2>Schedule</h2>
+              <span className="muted" style={{ fontSize: 12.5 }}>
+                {ganttItems.length} items · {ganttItems.filter((i) => i.critical).length} on the critical path
+              </span>
+            </div>
+            <div className="row gap-3">
+              <div className="segmented"><button disabled>Weeks</button><button aria-hidden style={{ pointerEvents: "none" }}>Months</button></div>
+              <button className={newItemOpen ? "btn-ghost" : "btn-primary"} onClick={() => setNewItemOpen((o) => !o)}>{newItemOpen ? "Cancel" : "+ New item"}</button>
+            </div>
+          </div>
           {newItemOpen && (
             <form className="card card--pad row wrap gap-3" style={{ marginBottom: "var(--sp-4)", alignItems: "flex-end" }} onSubmit={(e) => {
               e.preventDefault();
@@ -198,8 +256,32 @@ export function ProjectView() {
               <button type="submit">Create</button>
             </form>
           )}
-          <Gantt items={ganttItems} deps={deps} onReschedule={onReschedule} />
+          {ganttItems.length === 0 ? (
+            <div className="empty">
+              <span className="empty__title">Nothing scheduled yet</span>
+              <span>Create your first work item, or connect GitHub Projects and Foreman builds the timeline from your iterations.</span>
+              <div className="row gap-2" style={{ marginTop: "var(--sp-3)" }}>
+                <button className="btn-primary" onClick={() => setNewItemOpen(true)}>+ New item</button>
+                <button className="btn-ghost" onClick={() => setTab("settings")}>Import from GitHub</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <Gantt items={ganttItems} deps={deps} onReschedule={onReschedule} />
+              <div className="row wrap gap-4" style={{ padding: "12px 4px", fontSize: 11.5, color: "var(--t3)" }}>
+                <span className="row gap-2"><span style={{ width: 18, height: 8, borderRadius: 99, background: "var(--acc)" }} />In progress</span>
+                <span className="row gap-2"><span style={{ width: 18, height: 8, borderRadius: 99, background: "var(--ctl)", border: "1px solid var(--line2)" }} />Queued</span>
+                <span className="row gap-2"><span style={{ width: 18, height: 8, borderRadius: 99, background: "var(--warn)" }} />In review</span>
+                <span className="row gap-2"><span style={{ width: 18, height: 8, borderRadius: 99, background: "var(--bad)" }} />Blocked</span>
+                <span className="row gap-2"><span style={{ color: "var(--acc)" }}>◆</span>Critical path</span>
+                <span style={{ marginLeft: "auto" }}>Drag a bar to reschedule — changes write back to GitHub</span>
+              </div>
+            </>
+          )}
         </>
+      )}
+      {tab === "board" && (
+        <Board items={items.map((i) => ({ id: i.id, title: i.title, kind: i.kind, status: i.status, priority: i.priority }))} />
       )}
       {tab === "agents" && (
         <AgentTable agents={agents} onAction={(agentId, kind, extra) => {
@@ -254,7 +336,16 @@ export function ProjectView() {
               .catch(() => {});
           }} />
       )}
-      </main>
-    </>
+          </div>
+        </main>
+      </div>
+      <VoiceDock onCreate={async (title) => {
+        await api(`/api/projects/${projectId}/items`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title, kind: "task", priority: 100 }),
+        });
+        void load(["items", "schedule"]);
+      }} />
+    </div>
   );
 }

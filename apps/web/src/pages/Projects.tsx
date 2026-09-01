@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api.js";
+import { getTheme, toggleTheme } from "../theme.js";
 
 interface Org { id: string; slug: string }
 interface Project { id: string; name: string; gh_repos: string[] }
@@ -8,6 +9,7 @@ interface Project { id: string; name: string; gh_repos: string[] }
 export function Projects() {
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [projects, setProjects] = useState<Record<string, Project[]>>({});
+  const [themeLabel, setThemeLabel] = useState(getTheme() === "dark" ? "Light" : "Dark");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -28,10 +30,19 @@ export function Projects() {
   return (
     <>
       <header className="topbar">
-        <span className="topbar__title">Foreman</span>
+        <div className="row gap-2">
+          <span className="logo-tile" aria-hidden />
+          <span className="topbar__title">Foreman</span>
+        </div>
+        <div className="row gap-3">
+          <button style={{ borderRadius: "var(--r-pill)", fontSize: 12, color: "var(--t2)" }}
+            onClick={() => setThemeLabel(toggleTheme() === "dark" ? "Light" : "Dark")}>{themeLabel}</button>
+          <span className="avatar" style={{ width: 28, height: 28, fontSize: 11 }}>JD</span>
+        </div>
       </header>
-      <main className="container container--narrow" style={{ paddingBlock: "var(--sp-6)" }}>
-        <h1 style={{ marginBottom: "var(--sp-5)" }}>Projects</h1>
+      <main className="container container--narrow" style={{ paddingBlock: "56px" }}>
+        <h1 style={{ marginBottom: 6 }}>Projects</h1>
+        <p className="muted" style={{ marginBottom: "var(--sp-6)" }}>Pick a workspace to operate.</p>
         {orgs.length === 0 && (
           <div className="empty">
             <span className="empty__title">No workspaces yet</span>

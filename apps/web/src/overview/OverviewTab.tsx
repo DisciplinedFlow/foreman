@@ -45,14 +45,17 @@ export function OverviewTab({ sections, onOverride, onRegenerate, busy = false, 
   return (
     <div className="stack gap-4" style={{ maxWidth: 820 }}>
       <div className="section-head">
-        <h2>Living overview</h2>
+        <div className="stack" style={{ gap: 2 }}>
+          <h2>Living overview</h2>
+          <span className="muted" style={{ fontSize: 12.5 }}>Regenerated from the event log · sections carry provenance</span>
+        </div>
         <button className="btn-primary" onClick={onRegenerate} disabled={busy}>{busy ? "Regenerating…" : "Regenerate"}</button>
       </div>
       {sections.length === 0 && (
         <div className="empty"><span className="empty__title">No overview yet</span><span>Regenerate to build one from the event log.</span></div>
       )}
       {sections.map((s) => (
-        <section key={s.section_id} className="card card--pad stack gap-3">
+        <section key={s.section_id} className="card card--hover card--pad stack gap-3">
           <div className="row wrap gap-2" style={{ alignItems: "baseline" }}>
             <h3 style={{ marginRight: 4 }}>{TITLES[s.section_id] ?? s.section_id}</h3>
             <span className="badge">v{s.version}</span>

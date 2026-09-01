@@ -8,8 +8,8 @@ const ROW_H = 28;
 const LABEL_W = 220;
 
 const STATUS_FILL: Record<string, string> = {
-  queued: "#8b949e", claimed: "#58a6ff", in_progress: "#2da44e", blocked: "#d29922",
-  in_review: "#a371f7", done: "#1a7f37", cancelled: "#57606a", failed: "#d1242f", draft: "#d0d7de",
+  queued: "var(--t3)", claimed: "var(--acc)", in_progress: "var(--acc)", blocked: "var(--bad)",
+  in_review: "var(--warn)", done: "var(--ok)", cancelled: "var(--t3)", failed: "var(--bad)", draft: "var(--line2)",
 };
 
 export interface GanttProps {
@@ -77,7 +77,7 @@ export function Gantt({ items, deps, viewportHeight = 600, onReschedule }: Gantt
 
   return (
     <div
-      style={{ overflow: "auto", height: viewportHeight, border: "1px solid #d0d7de" }}
+      style={{ overflow: "auto", height: viewportHeight, border: "1px solid var(--line)", borderRadius: "var(--r-md)", background: "var(--surface)" }}
       onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
       data-testid="gantt-scroll"
     >
@@ -96,19 +96,19 @@ export function Gantt({ items, deps, viewportHeight = 600, onReschedule }: Gantt
               data-arrow={`${a.from}->${a.to}`}
               points={a.points.map(([x, y]) => `${x + LABEL_W},${y}`).join(" ")}
               fill="none"
-              stroke="#8b949e"
               strokeWidth={1.5}
+              style={{ stroke: "var(--line2)" }}
               markerEnd="url(#gantt-arrowhead)"
             />
           ))}
           <defs>
             <marker id="gantt-arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-              <path d="M0,0 L8,4 L0,8 z" fill="#8b949e" />
+              <path d="M0,0 L8,4 L0,8 z" style={{ fill: "var(--line2)" }} />
             </marker>
           </defs>
           {visible.map((r) => (
             <g key={r.id} transform={`translate(0, ${r.y})`}>
-              <text x={8 + r.depth * 16} y={ROW_H / 2 + 4} fontSize={12}>
+              <text x={8 + r.depth * 16} y={ROW_H / 2 + 4} fontSize={12} style={{ fill: "var(--t2)", fontFamily: "var(--font)" }}>
                 {r.title.length > 24 ? `${r.title.slice(0, 24)}…` : r.title}
               </text>
               <rect
@@ -118,12 +118,10 @@ export function Gantt({ items, deps, viewportHeight = 600, onReschedule }: Gantt
                 y={5}
                 width={Math.max(scale.pxPerDay / 2, r.w + dragWiden(r))}
                 height={ROW_H - 10}
-                rx={4}
-                fill={STATUS_FILL[r.status] ?? "#8b949e"}
-                stroke={r.critical ? "#d1242f" : "none"}
-                strokeWidth={r.critical ? 2.5 : 0}
-                opacity={r.startAt === null ? 0.35 : 1}
-                style={{ cursor: r.startAt !== null ? "grab" : "default", touchAction: "none" }}
+                rx={999}
+                opacity={r.startAt === null ? 0.4 : 1}
+                style={{ fill: STATUS_FILL[r.status] ?? "var(--t3)", stroke: r.critical ? "var(--acc)" : "none",
+                  strokeWidth: r.critical ? 2 : 0, cursor: r.startAt !== null ? "grab" : "default", touchAction: "none" }}
                 onPointerDown={onBarPointerDown(r, "move")}
                 onPointerMove={onBarPointerMove}
                 onPointerUp={onBarPointerUp(r)}
