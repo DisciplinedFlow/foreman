@@ -57,8 +57,14 @@ export function mountSetup(app: express.Express, opts: SetupOpts): void {
       hook_attributes: { url: `${opts.publicUrl}/webhook`, active: true },
       redirect_url: `${opts.publicUrl}/setup/github/callback`,
       public: false,
-      default_permissions: { issues: "write", pull_requests: "read", organization_projects: "admin" },
-      default_events: ["issues", "pull_request", "pull_request_review", "projects_v2_item"],
+      default_permissions: {
+        issues: "write", pull_requests: "read", organization_projects: "admin",
+        checks: "read", deployments: "read",
+      },
+      default_events: [
+        "issues", "pull_request", "pull_request_review", "projects_v2_item",
+        "check_run", "deployment_status",
+      ],
     };
     const action = `${githubBase}/organizations/${encodeURIComponent(ghOrg)}/settings/apps/new?state=${encodeURIComponent(state)}`;
     res.status(200).send(`<!doctype html>

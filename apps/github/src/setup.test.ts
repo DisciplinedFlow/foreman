@@ -55,8 +55,13 @@ describe("WL-6 manifest flow", () => {
     const raw = match?.[1];
     expect(raw).toBeDefined();
     const manifest = JSON.parse(raw!.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&amp;/g, "&"));
-    // Task-1 handler + Task-2 merged-and-reviewed metric depend on this delivery.
-    for (const event of ["issues", "pull_request", "pull_request_review", "projects_v2_item"]) {
+    // Every webhook event apps/github/src/handlers/index.ts routes must be requested
+    // here, or GitHub will simply never deliver it. Keep this list in sync with the
+    // dispatcher's case statements.
+    for (const event of [
+      "issues", "pull_request", "pull_request_review", "projects_v2_item",
+      "check_run", "deployment_status",
+    ]) {
       expect(manifest.default_events).toContain(event);
     }
   });
