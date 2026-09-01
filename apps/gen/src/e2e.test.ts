@@ -123,9 +123,16 @@ describe("phase 5 loop: direct the fleet, understand the project, briefs arrive"
   });
 
   it("scheduled brief fires in local time and arrives at the webhook", async () => {
-    // 07:05 CEST on a fresh local day
-    expect(briefDue("daily", "Europe/Amsterdam", null, new Date("2026-09-01T05:05:00Z"))).toBe(true);
-    const brief = await generateBrief(db.servicePool as pg.Pool, projectId, new Date("2026-09-01T05:05:00Z"));
+    // Window end must land after the real occurred_at of the work.completed
+    // events written earlier in this suite (those use the db's now(), not a
+    // mock clock) — so it is derived from wall-clock time, not hardcoded, or
+    // this test time-bombs once the real clock catches up to a fixed date.
+    // Noon UTC is always >=07:00 local in Europe/Amsterdam (CET or CEST), and
+    // "+24h" guarantees a calendar day strictly after every event above.
+    const windowEnd = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    windowEnd.setUTCHours(12, 0, 0, 0);
+    expect(briefDue("daily", "Europe/Amsterdam", null, windowEnd)).toBe(true);
+    const brief = await generateBrief(db.servicePool as pg.Pool, projectId, windowEnd);
     const channels = await deliverBrief(db.servicePool as pg.Pool, brief, {});
     expect(channels).toEqual(["webhook"]);
     expect(webhookHits.length).toBe(1);
@@ -134,6 +141,7 @@ describe("phase 5 loop: direct the fleet, understand the project, briefs arrive"
     expect((await db.servicePool.query(
       "select 1 from events where type='brief.delivered' and payload->>'brief_id'=$1", [brief.id])).rowCount).toBe(1);
     // and it is not due again the same local day
-    expect(briefDue("daily", "Europe/Amsterdam", brief.window_end, new Date("2026-09-01T09:00:00Z"))).toBe(false);
+    const sameLocalDayLater = new Date(windowEnd.getTime() + 4 * 60 * 60 * 1000);
+    expect(briefDue("daily", "Europe/Amsterdam", brief.window_end, sameLocalDayLater)).toBe(false);
   });
 });

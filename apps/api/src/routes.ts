@@ -511,9 +511,10 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
     const dayAgo = new Date(now.getTime() - 86400_000);
 
     const body = await withUser(deps.appPool, userId, async (tx) => {
-      const proj = await tx.query("select 1 from projects where id = $1", [req.params.id]);
+      const proj = await tx.query("select gh_installation_id from projects where id = $1", [req.params.id]);
       if (proj.rowCount === 0) return null;
       const p = req.params.id;
+      const ghConnected = proj.rows[0].gh_installation_id !== null;
 
       const completions = await tx.query(
         `select
@@ -556,14 +557,34 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
         `select count(*)::int as n from events where project_id = $1 and type = 'work.lease_expired'
            and occurred_at >= $2 and occurred_at < $3`, [p, week(1), now]);
 
+      // PRD §1.7 north star: for GitHub-connected projects, supervised throughput is
+      // reviewed-and-merged PRs, not bare acceptance verdicts. Windowed twice (this
+      // week, last week) the same way the verdict-based fallback is.
+      const mergedReviewed = (from: Date, to: Date) => tx.query(
+        `select
+           count(distinct m.work_item_id) filter (where r.work_item_id is not null)::int as reviewed_and_merged,
+           count(distinct m.work_item_id)::int as merged
+         from events m
+         left join events r on r.work_item_id = m.work_item_id
+           and r.type = 'github.pr_reviewed' and r.payload->>'state' = 'approved'
+           and r.occurred_at >= $2 and r.occurred_at < $3
+         where m.project_id = $1 and m.type = 'github.pr_merged'
+           and m.work_item_id is not null
+           and m.occurred_at >= $2 and m.occurred_at < $3`,
+        [p, from, to]);
+      const mergedThisWeek = ghConnected ? await mergedReviewed(week(1), now) : null;
+      const mergedLastWeek = ghConnected ? await mergedReviewed(week(2), week(1)) : null;
+
       const pick = (xs: number[], q: number) =>
         xs.length === 0 ? null : xs[Math.min(xs.length - 1, Math.floor(q * xs.length))]!;
       return {
         supervised_throughput: {
-          this_week: completions.rows[0].this_week,
-          last_week: completions.rows[0].last_week,
+          this_week: ghConnected ? mergedThisWeek!.rows[0].reviewed_and_merged : completions.rows[0].this_week,
+          last_week: ghConnected ? mergedLastWeek!.rows[0].reviewed_and_merged : completions.rows[0].last_week,
           all_completions_this_week: completions.rows[0].all_this_week,
-          method: "completions with acceptance verdicts",
+          method: ghConnected ? "merged and reviewed" : "completions with acceptance verdicts",
+          merged_this_week: ghConnected ? mergedThisWeek!.rows[0].merged : 0,
+          reviewed_and_merged_this_week: ghConnected ? mergedThisWeek!.rows[0].reviewed_and_merged : 0,
         },
         stall_detection: stallMs.length === 0 ? null : {
           median_ms: pick(stallMs, 0.5), p95_ms: pick(stallMs, 0.95), samples: stallMs.length,

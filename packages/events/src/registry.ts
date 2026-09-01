@@ -39,6 +39,7 @@ export const registry = {
   "github.issue_synced": z.object({ gh_repo: str, gh_issue_number: z.number().int(), gh_issue_node_id: str }).strict(),
   "github.pr_opened": z.object({ gh_repo: str, pr_number: z.number().int(), pr_url: str }).strict(),
   "github.pr_merged": z.object({ gh_repo: str, pr_number: z.number().int(), pr_url: str, merge_sha: z.string().optional() }).strict(),
+  "github.pr_reviewed": z.object({ gh_repo: str, pr_number: z.number().int(), pr_url: str, review_id: z.number().int(), reviewer: str, state: str }).strict(),
   "github.check_updated": z.object({ gh_repo: str, check_run_id: z.number().int(), status: str, conclusion: z.string().optional() }).strict(),
   "github.project_item_changed": z.object({ gh_item_node_id: str, field_node_id: z.string().optional(), from: z.unknown().optional(), to: z.unknown().optional() }).strict(),
 

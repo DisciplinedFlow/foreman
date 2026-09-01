@@ -5,9 +5,11 @@ import { createApp } from "./http.js";
 
 let db: TestDb;
 let a: Awaited<ReturnType<typeof seedOrgWithUser>>;
+let b: Awaited<ReturnType<typeof seedOrgWithUser>>;
 let appPool: pg.Pool;
 let url: string;
 let cookie: string;
+let cookieB: string;
 let close: () => Promise<unknown>;
 
 const NOW = "2026-08-31T12:00:00.000Z";
@@ -69,6 +71,42 @@ beforeAll(async () => {
 
   // one lease expiry in window
   await ev("work.lease_expired", { agent_id: agent }, ago(3));
+
+  // GitHub-connected project variant: merged-and-reviewed throughput.
+  b = await seedOrgWithUser(db.servicePool, "metrics-gh");
+  await db.servicePool.query("update projects set gh_installation_id = 987654 where id = $1", [b.projectId]);
+  const loginB = await fetch(`${url}/auth/dev-login`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "metrics-gh@test.local" }),
+  });
+  cookieB = loginB.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+
+  const evB = (type: string, payload: object, at: string, workItemId: string | null = null) =>
+    db.servicePool.query(
+      `insert into events (organisation_id, project_id, work_item_id, type, payload, occurred_at, recorded_at)
+       values ($1,$2,$3,$4,$5,$6,$6)`,
+      [b.orgId, b.projectId, workItemId, type, JSON.stringify(payload), at]);
+
+  const wiA = (await db.servicePool.query(
+    "insert into work_items (organisation_id, project_id, title) values ($1,$2,'gh-item-a') returning id",
+    [b.orgId, b.projectId])).rows[0].id;
+  const wiB = (await db.servicePool.query(
+    "insert into work_items (organisation_id, project_id, title) values ($1,$2,'gh-item-b') returning id",
+    [b.orgId, b.projectId])).rows[0].id;
+
+  // both completed this week with acceptance verdicts
+  await evB("work.completed", { summary: "a", acceptance_results: [{ criterion: "c", met: true }] }, ago(20), wiA);
+  await evB("work.completed", { summary: "b", acceptance_results: [{ criterion: "c", met: true }] }, ago(18), wiB);
+
+  // item A: merged + approved review (same work item, both this week)
+  await evB("github.pr_merged", { gh_repo: "o/r", pr_number: 1, pr_url: "https://gh.test/o/r/pull/1" }, ago(16), wiA);
+  await evB("github.pr_reviewed", {
+    gh_repo: "o/r", pr_number: 1, pr_url: "https://gh.test/o/r/pull/1",
+    review_id: 1, reviewer: "octoreviewer", state: "approved",
+  }, ago(15), wiA);
+
+  // item B: merged only, no review
+  await evB("github.pr_merged", { gh_repo: "o/r", pr_number: 2, pr_url: "https://gh.test/o/r/pull/2" }, ago(14), wiB);
 });
 afterAll(async () => { await close(); await appPool.end(); await db.teardown(); });
 
@@ -82,6 +120,7 @@ describe("metrics (PRD §1.7, deterministic)", () => {
       supervised_throughput: {
         this_week: 2, last_week: 1, all_completions_this_week: 3,
         method: "completions with acceptance verdicts",
+        merged_this_week: 0, reviewed_and_merged_this_week: 0,
       },
       stall_detection: { median_ms: 90000, p95_ms: 90000, samples: 1 },
       active_agents_24h: 1,
@@ -93,8 +132,28 @@ describe("metrics (PRD §1.7, deterministic)", () => {
   });
 
   it("cross-org 404s", async () => {
-    const b = await seedOrgWithUser(db.servicePool, "metrics-b");
-    const res = await fetch(`${url}/api/projects/${b.projectId}/metrics`, { headers: { cookie } });
+    const other = await seedOrgWithUser(db.servicePool, "metrics-b");
+    const res = await fetch(`${url}/api/projects/${other.projectId}/metrics`, { headers: { cookie } });
     expect(res.status).toBe(404);
+  });
+
+  it("GitHub-connected project reports merged-and-reviewed throughput", async () => {
+    const res = await fetch(`${url}/api/projects/${b.projectId}/metrics?now=${encodeURIComponent(NOW)}`,
+      { headers: { cookie: cookieB } });
+    expect(res.status).toBe(200);
+    const m = await res.json();
+    expect(m).toEqual({
+      supervised_throughput: {
+        this_week: 1, last_week: 0, all_completions_this_week: 2,
+        method: "merged and reviewed",
+        merged_this_week: 2, reviewed_and_merged_this_week: 1,
+      },
+      stall_detection: null,
+      active_agents_24h: 0,
+      open_decisions: 0,
+      briefs_7d: { generated: 0, delivered: 0 },
+      cost_7d: { usd: "0.00", previous_usd: "0.00" },
+      lease_expiries_7d: 0,
+    });
   });
 });

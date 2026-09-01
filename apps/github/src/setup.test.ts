@@ -45,6 +45,20 @@ describe("WL-6 manifest flow", () => {
     expect(html).toContain("https://gh.test/organizations/acme/settings/apps/new");
     expect(html).toContain("https://foreman.test/webhook");
     expect(html).toContain("projects_v2_item");
+    expect(html).toContain("pull_request_review");
+  });
+
+  it("manifest default_events covers every routed event this app depends on", async () => {
+    const res = await fetch(`${url}/setup/github/start?org_slug=setup-org&gh_org=acme`);
+    const html = await res.text();
+    const match = html.match(/name="manifest" value="([^"]*)"/);
+    const raw = match?.[1];
+    expect(raw).toBeDefined();
+    const manifest = JSON.parse(raw!.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&amp;/g, "&"));
+    // Task-1 handler + Task-2 merged-and-reviewed metric depend on this delivery.
+    for (const event of ["issues", "pull_request", "pull_request_review", "projects_v2_item"]) {
+      expect(manifest.default_events).toContain(event);
+    }
   });
 
   it("unknown org slug → 404", async () => {

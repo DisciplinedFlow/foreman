@@ -150,56 +150,184 @@ export function extractDjango(content: string): Found[] {
 }
 
 // Rails routes DSL (Phase 7 deviation 3): verb lines + `resources` expanded to
-// the five API routes (new/edit have no API meaning).
+// the five API routes (new/edit have no API meaning). Phase 9 deviation 4:
+// one level of `resources ... do ... end` nesting (Rails' own shallow
+// convention — deeper nesting still resolves against the immediate parent
+// only), plus `only:`/`except:` symbol-array filtering of the action set.
 const RAILS_VERB_RE = /^\s*(get|post|put|patch|delete)\s+['"]([^'"]+)['"]/;
-const RAILS_RESOURCES_RE = /^\s*resources\s+:(\w+)/;
+const RAILS_RESOURCES_RE = /^\s*resources\s+:(\w+)(.*)$/;
+
+// index/show are collection+member GET; the other three are POST/PATCH/DELETE.
+const RAILS_ACTIONS = ["index", "create", "show", "update", "destroy"] as const;
+type RailsAction = (typeof RAILS_ACTIONS)[number];
+const RAILS_ACTION_ROUTE: Record<RailsAction, { method: string; member: boolean }> = {
+  index: { method: "GET", member: false },
+  create: { method: "POST", member: false },
+  show: { method: "GET", member: true },
+  update: { method: "PATCH", member: true },
+  destroy: { method: "DELETE", member: true },
+};
+
+// Naive singularization (strip a trailing `s`) — good enough for the plural
+// resource names Rails scaffolding conventionally uses.
+const singularize = (name: string): string => name.endsWith("s") ? name.slice(0, -1) : name;
+
+const isRailsAction = (a: string): a is RailsAction => (RAILS_ACTIONS as readonly string[]).includes(a);
+
+// `only:`/`except:` accept either a bracketed symbol array (`only: [:a, :b]`)
+// or Rails' bare single-symbol shorthand (`only: :a`) — both are recognized.
+const RAILS_ONLY_BRACKET_RE = /\bonly:\s*\[([^\]]*)\]/;
+const RAILS_ONLY_BARE_RE = /\bonly:\s*:(\w+)\b/;
+const RAILS_EXCEPT_BRACKET_RE = /\bexcept:\s*\[([^\]]*)\]/;
+const RAILS_EXCEPT_BARE_RE = /\bexcept:\s*:(\w+)\b/;
+
+function railsActionSet(rest: string): Set<RailsAction> {
+  const parseList = (list: string): RailsAction[] =>
+    [...list.matchAll(/:(\w+)/g)].map((m) => m[1]!).filter(isRailsAction);
+
+  const onlyBracket = RAILS_ONLY_BRACKET_RE.exec(rest);
+  if (onlyBracket !== null) return new Set(parseList(onlyBracket[1]!));
+  const onlyBare = RAILS_ONLY_BARE_RE.exec(rest);
+  if (onlyBare !== null) return new Set(isRailsAction(onlyBare[1]!) ? [onlyBare[1]!] : []);
+
+  const set = new Set<RailsAction>(RAILS_ACTIONS);
+  const exceptBracket = RAILS_EXCEPT_BRACKET_RE.exec(rest);
+  if (exceptBracket !== null) { for (const a of parseList(exceptBracket[1]!)) set.delete(a); return set; }
+  const exceptBare = RAILS_EXCEPT_BARE_RE.exec(rest);
+  if (exceptBare !== null && isRailsAction(exceptBare[1]!)) set.delete(exceptBare[1]!);
+  return set;
+}
 
 export function extractRails(content: string): Found[] {
   const out: Found[] = [];
   const push = (method: string, path: string) => {
     if (validPath(path)) out.push({ method, path, source: "impl", framework: "rails", trivial: false });
   };
-  for (const line of content.split("\n")) {
-    if (isCommentLine(line)) continue;
-    const verb = RAILS_VERB_RE.exec(line);
+  const pushResource = (name: string, actions: Set<RailsAction>, parentSegment: string | null) => {
+    const base = parentSegment !== null ? `/${parentSegment}/${name}` : `/${name}`;
+    for (const action of RAILS_ACTIONS) {
+      if (!actions.has(action)) continue;
+      const { method, member } = RAILS_ACTION_ROUTE[action];
+      push(method, member ? `${base}/:id` : base);
+    }
+  };
+  // Generic `do`/`end` depth counter, plus a stack of {name, depth} entries
+  // pushed only by `resources ... do` (per the brief: "only resources ... do
+  // pushes"). A resources entry is popped when a matching `end` returns the
+  // depth to the level at which it was opened — so unrelated do/end blocks
+  // (member/collection/namespace/etc.) nested inside don't mis-pop it, and
+  // only the immediate parent (stack top) is ever used for nesting.
+  // Trailing `#`-comments are stripped before the do/end-anchor checks below
+  // (e.g. `resources :posts do # nested` must still be recognized as a block
+  // opener). Ruby string literals containing `#` on a routes line are out of
+  // scope for this simple strip.
+  const stripComment = (s: string): string => s.replace(/#.*$/, "").trim();
+  let depth = 0;
+  const resourceStack: Array<{ name: string; depth: number }> = [];
+  for (const rawLine of content.split("\n")) {
+    if (isCommentLine(rawLine)) continue;
+    const res = RAILS_RESOURCES_RE.exec(rawLine);
+    if (res !== null) {
+      const name = res[1]!;
+      const rest = res[2]!;
+      const actions = railsActionSet(rest);
+      const parent = resourceStack[resourceStack.length - 1];
+      const parentSegment = parent !== undefined ? `${parent.name}/:${singularize(parent.name)}_id` : null;
+      pushResource(name, actions, parentSegment);
+      if (/\bdo$/.test(stripComment(rest))) {
+        depth += 1;
+        resourceStack.push({ name, depth });
+      }
+      continue;
+    }
+    const verb = RAILS_VERB_RE.exec(rawLine);
     if (verb !== null) {
       const p = verb[2]!;
       push(verb[1]!.toUpperCase(), p.startsWith("/") ? p : `/${p}`);
       continue;
     }
-    const res = RAILS_RESOURCES_RE.exec(line);
-    if (res !== null) {
-      const base = `/${res[1]}`;
-      push("GET", base); push("POST", base);
-      push("GET", `${base}/:id`); push("PATCH", `${base}/:id`); push("DELETE", `${base}/:id`);
+    if (/\bdo$/.test(stripComment(rawLine))) { depth += 1; continue; }
+    if (/^end$/.test(stripComment(rawLine))) {
+      const top = resourceStack[resourceStack.length - 1];
+      if (top !== undefined && top.depth === depth) resourceStack.pop();
+      depth = Math.max(0, depth - 1);
     }
   }
   return out;
 }
 
 // Spring annotations (Phase 7 deviation 4): class-level @RequestMapping prefix
-// + per-method mappings; {id} path variables kept verbatim.
-const SPRING_CLASS_RE = /@RequestMapping\(\s*["']([^"']+)["']\s*\)/;
+// + per-method mappings; {id} path variables kept verbatim. Phase 9 deviation
+// 5: @RequestMapping's own argument list is scanned rather than matched by a
+// single rigid regex, so `value=`/`path=`/bare-string and `method =
+// RequestMethod.X` (including a braced multi-method array, `method =
+// {RequestMethod.GET, RequestMethod.POST}`) are accepted in any order. Only a
+// line with NO `method` arg at all is treated as the class-level prefix —
+// a method mapping whose method couldn't be parsed is skipped outright
+// rather than corrupting the prefix (regression fixed in Phase 9 review).
 const SPRING_METHOD_RE = /@(Get|Post|Put|Patch|Delete)Mapping(?:\(\s*(?:value\s*=\s*)?["']([^"']*)["']\s*\))?/;
-const SPRING_REQMAP_RE = /@RequestMapping\(\s*method\s*=\s*RequestMethod\.(GET|POST|PUT|PATCH|DELETE)\s*,\s*value\s*=\s*["']([^"']*)["']\s*\)/;
+const SPRING_REQMAP_RE = /@RequestMapping\(([^)]*)\)/;
+
+function parseSpringRequestMappingArgs(
+  argList: string,
+): { path: string | null; methods: string[]; hasMethodArg: boolean } {
+  // The `method` arg is pulled out of the raw string *before* splitting on
+  // comma, because a multi-method array — `method = {RequestMethod.GET,
+  // RequestMethod.POST}` — has its own internal comma that would otherwise
+  // split it into two unparseable fragments (Phase 9 regression: that used
+  // to leave `method` null while a path was still found, and the caller
+  // mistook the line for a class-level prefix, corrupting it for every
+  // @GetMapping below). `hasMethodArg` reports whether *any* `method` key
+  // was present, parseable or not, so the caller can tell "this is a
+  // method mapping with a method we couldn't parse" from "this really is
+  // just a class-level prefix".
+  const methodMatch = /\bmethod\s*=\s*(\{[^}]*\}|RequestMethod\.[A-Z]+)/.exec(argList);
+  const hasMethodArg = methodMatch !== null;
+  const methods: string[] = [];
+  let rest = argList;
+  if (methodMatch !== null) {
+    rest = argList.slice(0, methodMatch.index) + argList.slice(methodMatch.index + methodMatch[0].length);
+    for (const m of methodMatch[1]!.matchAll(/RequestMethod\.(GET|POST|PUT|PATCH|DELETE)/g)) {
+      methods.push(m[1]!);
+    }
+  }
+
+  let path: string | null = null;
+  for (const rawArg of rest.split(",")) {
+    const arg = rawArg.trim();
+    if (arg === "") continue;
+    const named = /^(?:value|path)\s*=\s*["']([^"']*)["']$/.exec(arg);
+    if (named !== null) { path = named[1]!; continue; }
+    const bare = /^["']([^"']*)["']$/.exec(arg);
+    if (bare !== null) { path = bare[1]!; continue; }
+  }
+  return { path, methods, hasMethodArg };
+}
 
 export function extractSpring(content: string): Found[] {
   const out: Found[] = [];
   const lines = content.split("\n").filter((l) => !isCommentLine(l));
   let prefix = "";
-  for (const line of lines) {
-    const cls = SPRING_CLASS_RE.exec(line);
-    if (cls !== null && !line.includes("method")) { prefix = cls[1]!.replace(/\/$/, ""); continue; }
-    let method: string | null = null;
-    let sub: string = "";
-    const mm = SPRING_METHOD_RE.exec(line);
-    if (mm !== null) { method = mm[1]!.toUpperCase(); sub = mm[2] ?? ""; }
-    const rm = SPRING_REQMAP_RE.exec(line);
-    if (rm !== null) { method = rm[1]!; sub = rm[2] ?? ""; }
-    if (method === null) continue;
+  const push = (method: string, sub: string) => {
     const joined = `${prefix}${sub === "" ? "" : sub.startsWith("/") ? sub : `/${sub}`}` || "/";
-    if (!validPath(joined)) continue;
-    out.push({ method, path: joined, source: "impl", framework: "spring", trivial: false });
+    if (validPath(joined)) out.push({ method, path: joined, source: "impl", framework: "spring", trivial: false });
+  };
+  for (const line of lines) {
+    const rm = SPRING_REQMAP_RE.exec(line);
+    if (rm !== null) {
+      const { path, methods, hasMethodArg } = parseSpringRequestMappingArgs(rm[1]!);
+      if (!hasMethodArg) {
+        // Only a @RequestMapping with NO method argument at all sets the
+        // class-level prefix — a method mapping we failed to parse must
+        // never be mistaken for one (that's the bug this guards against).
+        if (path !== null) prefix = path.replace(/\/$/, "");
+        continue;
+      }
+      for (const method of methods) push(method, path ?? "");
+      continue;
+    }
+    const mm = SPRING_METHOD_RE.exec(line);
+    if (mm !== null) push(mm[1]!.toUpperCase(), mm[2] ?? "");
   }
   return out;
 }

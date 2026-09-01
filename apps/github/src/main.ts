@@ -7,7 +7,7 @@ import { claimSyncJob, completeSyncJob } from "./jobs.js";
 import { handleSyncJob, type HandlerContext } from "./handlers/index.js";
 import { GithubBackbone } from "./backbone.js";
 import { mountSetup } from "./setup.js";
-import { openPem, keyFromEnv } from "./crypto.js";
+import { openPem, resolveMasterKey } from "./crypto.js";
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL
@@ -25,12 +25,16 @@ async function makeKv(): Promise<Kv> {
 }
 
 const kv = await makeKv();
+// Resolved once at boot (env|file|command, KMS-ready) and threaded everywhere
+// keyFromEnv()'s result used to be passed — an invalid key from any source
+// throws here, before the server starts accepting traffic.
+const masterKey = await resolveMasterKey();
 const tokens = new InstallationTokenSource({
   kv,
   getApp: async (appId) => {
     const r = await pool.query("select private_key_pem from github_apps where app_id = $1", [appId]);
     if (r.rowCount === 0) throw new Error(`unknown github app ${appId}`);
-    return { privateKeyPem: openPem(r.rows[0].private_key_pem, keyFromEnv()) };
+    return { privateKeyPem: openPem(r.rows[0].private_key_pem, masterKey) };
   },
 });
 const echo = new EchoCache(kv);
@@ -47,7 +51,7 @@ mountSetup(receiver, {
   pool,
   secret: process.env.FOREMAN_SESSION_SECRET ?? "dev-only-secret",
   publicUrl: process.env.FOREMAN_PUBLIC_URL ?? `http://localhost:${port}`,
-  ...(keyFromEnv() !== undefined ? { masterKey: keyFromEnv()! } : {}),
+  ...(masterKey !== undefined ? { masterKey } : {}),
 });
 receiver.listen(port, () => {
   console.log(`foreman-github webhook receiver on :${port}`);
