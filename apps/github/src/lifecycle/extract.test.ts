@@ -147,6 +147,46 @@ end
     expect(keys.some((k) => k.includes("commented"))).toBe(false);
     expect(found.length).toBe(7);
   });
+
+  it("expands one level of nested resources to shallow parent-scoped routes", () => {
+    const src = `
+Rails.application.routes.draw do
+  resources :posts do
+    resources :comments
+  end
+end
+`;
+    const found = extractRails(src);
+    const keys = found.map((f) => `${f.method} ${f.path}`).sort();
+    expect(keys).toEqual([
+      "DELETE /posts/:id",
+      "DELETE /posts/:post_id/comments/:id",
+      "GET /posts",
+      "GET /posts/:id",
+      "GET /posts/:post_id/comments",
+      "GET /posts/:post_id/comments/:id",
+      "PATCH /posts/:id",
+      "PATCH /posts/:post_id/comments/:id",
+      "POST /posts",
+      "POST /posts/:post_id/comments",
+    ]);
+  });
+
+  it("honours only: to restrict the expanded action set", () => {
+    const src = `resources :sessions, only: [:create, :destroy]`;
+    const found = extractRails(src);
+    const keys = found.map((f) => `${f.method} ${f.path}`).sort();
+    expect(keys).toEqual(["DELETE /sessions/:id", "POST /sessions"]);
+  });
+
+  it("honours except: to exclude actions from the expanded set", () => {
+    const src = `resources :sessions, except: [:destroy]`;
+    const found = extractRails(src);
+    const keys = found.map((f) => `${f.method} ${f.path}`).sort();
+    expect(keys).toEqual([
+      "GET /sessions", "GET /sessions/:id", "PATCH /sessions/:id", "POST /sessions",
+    ]);
+  });
 });
 
 describe("extractSpring", () => {
@@ -178,6 +218,31 @@ public class OrderController {
       "GET /api/orders/{id}",
       "POST /api/orders/{id}/cancel",
     ]);
+  });
+
+  it("parses @RequestMapping argument lists in any order (value-first, method-second)", () => {
+    const found = extractSpring(`@RequestMapping(value = "/orders", method = RequestMethod.POST)`);
+    const keys = found.map((f) => `${f.method} ${f.path}`);
+    expect(keys).toEqual(["POST /orders"]);
+  });
+
+  it("accepts the path= alias for @RequestMapping", () => {
+    const found = extractSpring(`@RequestMapping(path = "/orders", method = RequestMethod.GET)`);
+    const keys = found.map((f) => `${f.method} ${f.path}`);
+    expect(keys).toEqual(["GET /orders"]);
+  });
+
+  it("joins Kotlin-style @GetMapping with the class prefix (regression guard)", () => {
+    const src = `
+@RequestMapping("/api")
+class ItemController {
+    @GetMapping("/items/{id}")
+    fun one(@PathVariable id: Long): Item = service.get(id)
+}
+`;
+    const found = extractSpring(src);
+    const keys = found.map((f) => `${f.method} ${f.path}`);
+    expect(keys).toEqual(["GET /api/items/{id}"]);
   });
 });
 
