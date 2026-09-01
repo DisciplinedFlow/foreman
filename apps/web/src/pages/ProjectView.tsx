@@ -281,7 +281,15 @@ export function ProjectView() {
         </>
       )}
       {tab === "board" && (
-        <Board items={items.map((i) => ({ id: i.id, title: i.title, kind: i.kind, status: i.status, priority: i.priority }))} />
+        <Board items={items.map((i) => ({ id: i.id, title: i.title, kind: i.kind, status: i.status, priority: i.priority }))}
+          onMove={(itemId, toStatus) => {
+            // Optimistic move already happened in Board; on failure this reloads
+            // the real status, on success the SSE items-invalidate confirms it.
+            api(`/api/projects/${projectId}/items/${itemId}/status`, {
+              method: "PATCH", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ status: toStatus }),
+            }).catch(() => { void load(["items"]); });
+          }} />
       )}
       {tab === "agents" && (
         <AgentTable agents={agents} onAction={(agentId, kind, extra) => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface BoardItem {
   id: string;
@@ -34,18 +34,34 @@ function group(items: BoardItem[]): Record<string, BoardItem[]> {
   return cols;
 }
 
+// Column -> the human-settable status a drop into it persists as (registry:
+// work.status_changed accepts queued|blocked|in_review|done|cancelled).
+// "In progress" is queue-owned (claimed/in_progress are set by the worker on
+// claim/lease) — dropping into it is a local-only move, no persist call.
+const PERSIST_STATUS: Record<string, string | null> = {
+  backlog: "queued", onhold: "blocked", inprogress: null,
+  done: "done", reviewed: "in_review", deployed: "done",
+};
+
 // §4: the Board. Stage-owning agents plus full drag-and-drop. Card moves are
-// optimistic and local for now — persistence goes through a transition request
-// the owning agent verifies (backend TODO); the footnote states this.
-export function Board({ items }: { items: BoardItem[] }) {
+// optimistic and local first; PATCH .../status persists them (work.status_changed).
+export function Board({ items, onMove }: { items: BoardItem[]; onMove?: (itemId: string, toStatus: string) => void }) {
   const [cols, setCols] = useState<Record<string, BoardItem[]>>(() => group(items));
   const [over, setOver] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
 
-  // Re-sync when the server sends new items (SSE), unless mid-drag.
-  useEffect(() => { if (dragging === null) setCols(group(items)); }, [items, dragging]);
+  // Re-sync when the server sends new items (SSE), unless mid-drag. Reading
+  // dragging via a ref (not a dependency) matters: dragging flips to null the
+  // instant a drop finishes, and if that flip re-ran this effect against the
+  // still-stale `items` prop it would immediately snap the optimistic move
+  // back — the one case where that's visible and permanent is the queue-owned
+  // "in progress" column, which never gets a persisted status to resync from.
+  const draggingRef = useRef(dragging);
+  draggingRef.current = dragging;
+  useEffect(() => { if (draggingRef.current === null) setCols(group(items)); }, [items]);
 
   const onDrop = (toCol: string) => {
+    const draggedId = dragging;
     setCols((prev) => {
       if (dragging === null) return prev;
       const next: Record<string, BoardItem[]> = {};
@@ -58,6 +74,8 @@ export function Board({ items }: { items: BoardItem[] }) {
     });
     setOver(null);
     setDragging(null);
+    const toStatus = PERSIST_STATUS[toCol] ?? null;
+    if (draggedId !== null && toStatus !== null) onMove?.(draggedId, toStatus);
   };
 
   const total = items.length;
@@ -79,7 +97,7 @@ export function Board({ items }: { items: BoardItem[] }) {
             const cards = cols[col.key] ?? [];
             const isOver = over === col.key;
             return (
-              <div key={col.key}
+              <div key={col.key} data-col={col.key}
                 onDragOver={(e) => { e.preventDefault(); setOver(col.key); }}
                 onDragLeave={() => setOver((o) => (o === col.key ? null : o))}
                 onDrop={() => onDrop(col.key)}
@@ -97,7 +115,7 @@ export function Board({ items }: { items: BoardItem[] }) {
                   <span style={{ fontSize: 10, color: "var(--t3)", marginLeft: "auto" }}>idle</span>
                 </div>
                 {cards.map((k) => (
-                  <div key={k.id} draggable
+                  <div key={k.id} draggable data-item-id={k.id}
                     onDragStart={() => setDragging(k.id)}
                     onDragEnd={() => { setDragging(null); setOver(null); }}
                     style={{ background: "var(--elev)", border: "1px solid var(--line)", borderRadius: "var(--r-sm)",

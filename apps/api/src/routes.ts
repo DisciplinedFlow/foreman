@@ -310,6 +310,44 @@ export function mountRoutes(api: express.Router, deps: ApiDeps): void {
     }
   }));
 
+  // Board drag-and-drop: only the human-meaningful statuses are settable by
+  // hand. claimed/in_progress are queue-owned (the worker sets them on
+  // claim/lease) — hand-setting either would corrupt the claim.
+  const statusBody = z.object({
+    status: z.enum(["queued", "blocked", "in_review", "done", "cancelled"]),
+  }).strict();
+
+  api.patch("/projects/:id/items/:itemId/status", wrap(async (req, res) => {
+    const { userId } = req as AuthedRequest;
+    const parsed = statusBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid" });
+
+    const item = await withUser(deps.appPool, userId, async (tx) =>
+      (await tx.query(
+        "select organisation_id, status from work_items where id = $1 and project_id = $2",
+        [req.params.itemId, req.params.id])).rows[0] ?? null);
+    if (item === null) return res.status(404).json({ error: "not found" });
+
+    const client = await deps.servicePool.connect();
+    try {
+      await client.query("begin");
+      const updated = await client.query(
+        "update work_items set status = $2, updated_at = now() where id = $1 returning id, status",
+        [req.params.itemId, parsed.data.status]);
+      await appendEvent(client, {
+        organisation_id: item.organisation_id, project_id: req.params.id, work_item_id: req.params.itemId,
+        type: "work.status_changed", payload: { from: item.status, to: parsed.data.status },
+      });
+      await client.query("commit");
+      return res.json(updated.rows[0]);
+    } catch (err) {
+      await client.query("rollback").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }));
+
   api.get("/projects/:id/checkpoints", wrap(async (req, res) => {
     const { userId } = req as AuthedRequest;
     const checkpoints = await withUser(deps.appPool, userId, async (tx) =>
